@@ -71,7 +71,7 @@ docs/                 architecture, flows, reliability, testing (EN and PT-BR)
 
 ## Tests
 
-I'm working test-first from here on. The suite includes unit coverage for the simulated payment gateway and integration coverage for consumers, endpoints, and the end-to-end order flow with Testcontainers. The strategy is in [docs/en/06-testing-strategy.md](docs/en/06-testing-strategy.md).
+I'm working test-first from here on. The test projects are the next step, and the plan (unit, consumer and end-to-end layers, with Testcontainers) is in [docs/en/06-testing-strategy.md](docs/en/06-testing-strategy.md).
 
 ## Documentation
 

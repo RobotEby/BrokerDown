@@ -75,7 +75,7 @@ public class EndToEndTests : IAsyncLifetime
         var orderId = await CreateOrderAsync();
 
         await Eventually.Until(async () => await ReadStatusAsync(orderId) != OrderStatus.Pending,
-            timeout: TimeSpan.FromSeconds(60));
+            timeout: TimeSpan.FromSeconds(20));
 
         (await ReadStatusAsync(orderId)).ShouldBe(OrderStatus.Paid);
     }
@@ -94,7 +94,7 @@ public class EndToEndTests : IAsyncLifetime
         var orderId = await CreateOrderAsync();
 
         await Eventually.Until(async () => await ReadStatusAsync(orderId) != OrderStatus.Pending,
-            timeout: TimeSpan.FromSeconds(60));
+            timeout: TimeSpan.FromSeconds(20));
 
         (await ReadStatusAsync(orderId)).ShouldBe(OrderStatus.PaymentFailed);
     }
@@ -116,7 +116,7 @@ public class EndToEndTests : IAsyncLifetime
         _ = payments.CreateClient();
 
         await Eventually.Until(async () => await ReadStatusAsync(orderId) == OrderStatus.Paid,
-            timeout: TimeSpan.FromSeconds(60));
+            timeout: TimeSpan.FromSeconds(20));
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public class EndToEndTests : IAsyncLifetime
         _ = payments.CreateClient();
 
         await Eventually.Until(async () => await ReadStatusAsync(orderId) == OrderStatus.Paid,
-            timeout: TimeSpan.FromSeconds(120));
+            timeout: TimeSpan.FromSeconds(30));
     }
 
     private sealed record OrderAccepted(Guid Id, string Status);
