@@ -146,10 +146,9 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
         await _harness.Harness.Bus.Publish(new OrderCreated(orderId, Guid.NewGuid(), 149.90m, DateTimeOffset.UtcNow));
 
         (await _harness.Harness.Published.Any<Fault<OrderCreated>>()).ShouldBeTrue();
+        (await _harness.Harness.Published.Any<PaymentProcessed>(m => m.Context.Message.OrderId == orderId))
+            .ShouldBeFalse();
 
-        // The Payment row and its outbox event are written in the same
-        // SaveChanges call, so a Payments count of 0 proves both were rolled
-        // back together — the atomicity guarantee this scenario is about.
         using var scope = _harness.Services.CreateScope();
         var count = await scope.ServiceProvider.GetRequiredService<PaymentsDb>()
             .Payments.CountAsync(p => p.OrderId == orderId);

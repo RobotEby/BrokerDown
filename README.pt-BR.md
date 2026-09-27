@@ -71,7 +71,7 @@ docs/                 arquitetura, fluxos, confiabilidade, testes (EN e PT-BR)
 
 ## Testes
 
-A partir daqui trabalho testes primeiro. A suíte inclui cobertura de unidade para o gateway de pagamento simulado e cobertura de integração para consumers, endpoints e o fluxo de pedidos ponta a ponta com Testcontainers. A estratégia está em [docs/pt-BR/06-testing-strategy.md](docs/pt-BR/06-testing-strategy.md).
+A partir daqui trabalho testes primeiro. Os projetos de teste são o próximo passo, e o plano (camadas de unidade, consumers e ponta a ponta, com Testcontainers) está em [docs/pt-BR/06-testing-strategy.md](docs/pt-BR/06-testing-strategy.md).
 
 ## Documentação
 
