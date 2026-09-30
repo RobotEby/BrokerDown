@@ -2,8 +2,14 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:35d40304542c8689331f8cab17c65926cd
 ARG PROJECT
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props ./
+COPY src/Shared.Contracts/Shared.Contracts.csproj src/Shared.Contracts/
+COPY src/Shared.Infrastructure/Shared.Infrastructure.csproj src/Shared.Infrastructure/
+COPY src/Orders.Api/Orders.Api.csproj src/Orders.Api/
+COPY src/Payments.Api/Payments.Api.csproj src/Payments.Api/
+COPY src/Chaos.Worker/Chaos.Worker.csproj src/Chaos.Worker/
+RUN dotnet restore src/${PROJECT}/${PROJECT}.csproj
 COPY src/ src/
-RUN dotnet publish src/${PROJECT}/${PROJECT}.csproj -c Release -o /app
+RUN dotnet publish src/${PROJECT}/${PROJECT}.csproj -c Release --no-restore -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0@sha256:2f202e1169ec507bdc07007cf68c14d0ff3a098110b17c460a60185e1f36a9d1
 ARG PROJECT
