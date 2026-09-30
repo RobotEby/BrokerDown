@@ -1,32 +1,17 @@
-# 07 · Development workflow
+# Development workflow
 
-## The cycle
+Keep net8.0, EF Core and MassTransit 8. Dependencies are exact versions in project files. SDK 10 is selected by global.json locally, SDK 10 images in Docker, and setup-dotnet 10.0.x in CI; install the net8 ASP.NET runtime locally for tests.
 
-1. **Document the behavior (RDD).** I describe what the change should do in the README or `docs/`, and add its scenarios to the catalog in [03 · Message flow](03-message-flow.md).
-2. **Write the tests (TDD).** One failing test per scenario, at the lowest layer that can express it.
-3. **Make it pass.** The simplest change that turns the test green.
-4. **Refactor.** With the tests green, I clean up without changing behavior.
-5. **Update the docs.** Both languages, in the same change.
+```bash
+dotnet tool restore
+dotnet restore ChaosLab.NET.slnx
+dotnet build ChaosLab.NET.slnx -c Release --no-restore
+dotnet test ChaosLab.NET.slnx -c Release --no-build
+docker compose config --quiet
+```
 
-I don't write production code for a new feature until a failing test exists for it.
+Payments migrations belong to PaymentsDb, never SimulatedGatewayDb. The latter intentionally uses an independent transaction but shares the schema managed by PaymentsDb. Use the design-time factory with dotnet ef and review generated SQL; production-like data requires backup and a deliberate migration run.
 
-## Language rules
+A change is reviewable when its failure mode has a runnable check, appropriate tests pass, Compose remains healthy, and English/Portuguese documentation matches the implementation. Keep IDs in structured logs, not metric labels. Do not commit .env, artifacts or secrets.
 
-- Everything under `docs/` and the main READMEs exists in **English and Brazilian Portuguese**. The two versions carry the same content and the same file names. I update both in the same change, so they never drift.
-- Code comments are written in **English only**.
-- Commit messages are written in English.
-
-## Comment policy
-
-I keep comments to a minimum. Good names and small methods should make the code readable on their own. A comment earns its place only when the *why* is hard to see from the code: an intricate consumer flow, a subtle ordering constraint, or a specific business rule. A comment that restates what the next line does gets deleted.
-
-## Commits and pull requests
-
-I use Conventional Commits: `docs:`, `test:`, `feat:`, `fix:`, `refactor:`, `chore:`.
-
-A pull request is ready when:
-
-- the behavior is documented in both languages;
-- the tests cover the scenarios and pass;
-- the code follows the comment policy;
-- `docker compose up -d --build` still brings the whole system up.
+GitHub Actions runs unit/integration/chaos categories and the full Compose demo. The demo intentionally exercises the kill switch at the end; restart Payments and Worker to reset it.

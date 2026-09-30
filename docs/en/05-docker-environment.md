@@ -1,66 +1,54 @@
-# 05 · Docker environment
+# Docker environment
 
-Everything runs locally with Docker Compose. The only prerequisite is Docker.
-
-## Services
-
-| Service | Image | Ports | Notes |
-|---|---|---|---|
-| `rabbitmq` | `rabbitmq:3.13-management` | 5672 (AMQP), 15672 (UI) | Credentials from `.env` |
-| `sqlserver` | `mssql/server:2022-latest` | 1433 | One instance, two databases, data in the `sqldata` volume |
-| `orders-api` | built from `Dockerfile` | 5001 → 8080 | Uses `OrdersDb` |
-| `payments-api` | built from `Dockerfile` | 5002 → 8080 | Uses `PaymentsDb`, reads `Gateway__FailureRate` |
-
-## Startup order
-
-```mermaid
-flowchart LR
-    R[rabbitmq healthy] --> O[orders-api]
-    S[sqlserver healthy] --> O
-    R --> P[payments-api]
-    S --> P
-```
-
-RabbitMQ and SQL Server both define healthchecks, and the two APIs wait for them with `condition: service_healthy`. On top of that, each API retries creating its database on startup (up to 15 attempts, 3 seconds apart), because SQL Server can report healthy slightly before it accepts every kind of connection.
-
-## One Dockerfile for both services
-
-The `Dockerfile` is a multi-stage build parameterized by `PROJECT`. Compose passes `Orders.Api` or `Payments.Api`, and the same file builds either one. The final image is the ASP.NET runtime image, listening on port 8080.
-
-## Configuration
-
-Settings arrive as environment variables, using ASP.NET Core's double underscore convention:
-
-| Variable | Purpose |
-|---|---|
-| `ConnectionStrings__Db` | The service's SQL Server connection string |
-| `RabbitMq__Host`, `RabbitMq__User`, `RabbitMq__Password` | Broker connection |
-| `Gateway__FailureRate` | Payments only. Probability (0 to 1) that the simulated gateway declines a charge |
-
-`.env` holds `SA_PASSWORD`, `RABBIT_USER` and `RABBIT_PASS`. These are development credentials and must never be reused elsewhere.
-
-## Everyday commands
+The root Compose file runs six services, binds all published ports to localhost and keeps SQL, RabbitMQ and Prometheus data in named volumes. Runtime images and build SDK are pinned by digest. The applications target net8.0; SDK 10 reads the .slnx solution.
 
 ```bash
-docker compose up -d --build     # start everything
+cp .env.example .env  # first setup only
+docker compose config --quiet
+docker compose up -d --build --wait --wait-timeout 180
 docker compose logs -f payments-api
-docker compose stop rabbitmq     # simulate a broker outage
-docker compose down              # stop, keep data
-docker compose down -v           # stop and wipe the databases
+docker compose down  # keeps volumes
 ```
 
-## Running the apps outside Docker
+Do not delete volumes to resolve a migration error. Existing credentials belong to their initialized databases/broker; editing .env does not rotate existing users.
 
-Start only the infrastructure and run the services with the .NET SDK. The defaults in `appsettings.json` point at `localhost`.
+SQL/RabbitMQ readiness precedes Payments. Payments readiness precedes Orders, ensuring the durable subscriber queue exists before publication. RabbitMQ probes run as rabbitmq, avoiding creation of a root-owned Erlang cookie. The hostname remains stable across restarts.
+
+## Legacy Payments database
+
+Fresh databases use EF migrations automatically. A database created by the old EnsureCreated version must be explicitly adopted. Stop writers, back up, then run the adoption command:
 
 ```bash
-docker compose up -d rabbitmq sqlserver
-dotnet run --project src/Orders.Api --urls http://localhost:5001
-dotnet run --project src/Payments.Api --urls http://localhost:5002
+docker compose stop chaos-worker orders-api payments-api
+docker compose up -d --wait sqlserver rabbitmq
+docker compose exec -T sqlserver sh -c 'exec /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -b -Q "BACKUP DATABASE PaymentsDb TO DISK = '\''/var/opt/mssql/data/PaymentsDb-before-migrations.bak'\'' WITH COPY_ONLY, CHECKSUM"'
+docker compose run --rm --no-deps payments-api --adopt-legacy-database
+docker compose up -d --wait --wait-timeout 180
 ```
 
-## Troubleshooting
+The backup stays in sqldata; also copy it outside the Docker volume when retaining it long term. Adoption checks expected columns/types/nullability and idempotency indexes, records the initial migration baseline, then adds SimulatedCharges. It preserves existing payments, but does not invent historical simulated charge rows. Unknown schema fails with a diagnostic. Repeated adoption/startup is safe. Inspect migrations rather than manually altering migration history.
 
-- **A service keeps restarting at first boot.** SQL Server takes a while on a cold start. Give it a minute and check `docker compose logs sqlserver`.
-- **Port already in use.** Change the left side of the port mapping in `docker-compose.yml`.
-- **Strange data from a previous run.** `docker compose down -v` gives you a clean slate.
+Orders retains EnsureCreated because its schema has not changed. Future schema changes there require a separate migration baseline.
+
+## Separate topology deployment
+
+Before allowing the first publisher on a clean vhost:
+
+```bash
+docker compose run --rm --no-deps payments-api --deploy-topology
+```
+
+This deploys queues/bindings and exits without consuming messages or initializing SQL. The regular Compose startup already provisions topology by starting Payments first.
+
+## Local execution and troubleshooting
+
+For IDE runs, supply ConnectionStrings__Db and RabbitMq__Password through user-secrets or your shell, plus RabbitMq__Host/Port/VirtualHost as needed. Telemetry__MetricsEndpoint is the full OTLP HTTP URL. Never copy passwords into appsettings.
+
+If the build cannot reach NuGet/Debian over Docker's bridge but host networking works (observed on this WSL environment), Linux users can run:
+
+```bash
+BUILD_NETWORK=host docker compose build
+docker compose up -d --wait --wait-timeout 180
+```
+
+This changes build networking only. The default remains Docker's normal build network. Diagnose port conflicts with docker compose ps; distinguish /health liveness from /health/ready dependency health. The demo restores a stopped broker even on assertion failure.

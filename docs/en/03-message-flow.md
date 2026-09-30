@@ -1,94 +1,46 @@
-# 03 · Message flow
+# Message flow and experiments
 
-## The happy path
+`OrderCreated` and `PaymentProcessed` retain their public contracts. Accepted orders start Pending; the first committed result changes them to Paid or PaymentFailed. Duplicate or competing results cannot overwrite a terminal state.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Client
-    participant O as Orders.Api
-    participant MQ as RabbitMQ
-    participant P as Payments.Api
-    participant G as Gateway (simulated)
+| Condition | Observable behavior |
+|---|---|
+| Broker down | POST returns 202 if SQL is available; outbox remains pending; readiness is 503 |
+| Payments down | Events wait in its pre-provisioned durable queue |
+| Consumer SQL write fails | Payment/result outbox roll back; no result reaches subscribers |
+| Charge commits before consumer fails | Redelivery retrieves the durable charge |
+| Primary unavailable, timeout or open circuit | Reconcile charge, then use fallback if absent |
+| Commercial decline | PaymentFailed; no gateway retry/fallback |
+| Original cancellation | Propagates; never becomes a decline |
 
-    C->>O: POST /orders
-    Note over O: Saves the order as Pending and the<br/>OrderCreated event in one transaction
-    O-->>C: 202 Accepted
-    O->>MQ: OrderCreated (delivered from the outbox)
-    MQ->>P: OrderCreated
-    P->>G: Charge
-    G-->>P: Approved
-    Note over P: Saves the payment and the<br/>PaymentProcessed event in one transaction
-    P->>MQ: PaymentProcessed (delivered from the outbox)
-    MQ->>O: PaymentProcessed
-    Note over O: Order becomes Paid
-```
+## Control API
 
-The customer gets an answer at step 3, before any payment work happens. Everything after that is background work.
+| Route | Result |
+|---|---|
+| GET /chaos | Enabled/kill switch, cooldown, current or last run, latest metric assessment |
+| POST /chaos/experiments | JSON fault Latency or Unavailable, durationSeconds=30, latencyMilliseconds=2000; 202 with ExperimentId |
+| POST /chaos/abort | Cancel pending request or request active abort; 202 |
+| POST /chaos/kill-switch | Block new requests and publish global abort; 202 |
 
-## When the payment is declined
-
-The flow is identical up to the gateway. When the gateway declines, `Payments.Api` stores the payment as `Declined` with the reason, publishes `PaymentProcessed` with `Success = false`, and `Orders.Api` moves the order to `PaymentFailed`. A decline is a normal business outcome, not an error.
-
-## Lifecycle
+Invalid input returns 400; disabled, active or cooling-down state returns 409. All services also expose liveness and dependency readiness.
 
 ```mermaid
 stateDiagram-v2
-    direction LR
-    [*] --> Pending: order accepted
-    Pending --> Paid: payment approved
-    Pending --> PaymentFailed: payment declined
-    Paid --> [*]
-    PaymentFailed --> [*]
+    [*] --> cooldown
+    cooldown --> waiting: explicit request after cooldown
+    waiting --> starting: safe metrics
+    waiting --> rejected: 60s without safe conditions
+    waiting --> aborted: operator abort
+    starting --> active: Payments started ACK
+    starting --> abort_requested: no ACK after 10s
+    active --> abort_requested: unsafe metrics or operator
+    active --> expired: local TTL
+    abort_requested --> aborted: target ACK
+    abort_requested --> expired: TTL even without ACK
+    rejected --> cooldown
+    aborted --> cooldown
+    expired --> cooldown
 ```
 
-`Paid` and `PaymentFailed` are final. A payment record is `Approved` or `Declined` and never changes afterward.
+No automatic repetition. Commands include ExperimentId and an absolute expiry. Payments rejects expired/invalid commands and prevents duplicate starts from extending TTL. Abort interrupts artificial latency. Only the primary gateway is affected, before recording a charge. Kill switch stays set until the relevant processes restart. Metrics thresholds and safety defaults are listed in the README.
 
-## Contracts
-
-| Event | Published by | Consumed by | Fields |
-|---|---|---|---|
-| `OrderCreated` | Orders | Payments | `OrderId`, `CustomerId`, `Amount`, `CreatedAt` |
-| `PaymentProcessed` | Payments | Orders | `OrderId`, `Success`, `Gateway`, `FailureReason?`, `ProcessedAt` |
-
-## Messaging topology
-
-MassTransit names things by convention. Events are published to an exchange named after the message type, and each consumer gets a queue named after itself in kebab-case (`OrderCreatedConsumer` listens on `order-created`, `PaymentProcessedConsumer` on `payment-processed`). You can see all of it in the RabbitMQ management UI.
-
-## Behavior scenarios
-
-This catalog is the contract between the documentation and the tests. Every scenario gets an ID, and every test will reference the ID it verifies. If a behavior isn't listed here, I add it here before I write its test.
-
-### Orders
-
-| ID | Scenario |
-|---|---|
-| ORD-01 | Given a valid request, when I create an order, then it is stored as `Pending`, `OrderCreated` is stored in the outbox in the same transaction, and the response is `202`. |
-| ORD-02 | Given an amount that is zero or negative, when I create an order, then the response is `400` and nothing is stored or published. |
-| ORD-03 | Given an existing order, when I fetch it, then I get `200` with its current status. |
-| ORD-04 | Given an unknown id, when I fetch an order, then I get `404`. |
-| ORD-05 | Given a `Pending` order, when a successful `PaymentProcessed` arrives, then the order becomes `Paid`. |
-| ORD-06 | Given a `Pending` order, when a failed `PaymentProcessed` arrives, then the order becomes `PaymentFailed` and keeps the failure reason. |
-| ORD-07 | Given an order that is not `Pending`, when a `PaymentProcessed` arrives, then nothing changes. |
-| ORD-08 | Given an unknown order id, when a `PaymentProcessed` arrives, then it is ignored without error. |
-| ORD-09 | Given the broker is unavailable, when I create an order, then the response is still `202`, and the event is delivered once the broker is back. |
-
-### Payments
-
-| ID | Scenario |
-|---|---|
-| PAY-01 | Given the gateway approves, when `OrderCreated` arrives, then the payment is stored as `Approved` and `PaymentProcessed` with `Success = true` is published. |
-| PAY-02 | Given the gateway declines, when `OrderCreated` arrives, then the payment is stored as `Declined` with the reason and `PaymentProcessed` with `Success = false` is published. |
-| PAY-03 | Given an order that already has a payment, when `OrderCreated` arrives again, then no new charge happens and nothing is published. |
-| PAY-04 | Given the same message is delivered twice, then it is processed once. |
-| PAY-05 | Given the payment and its event are being saved, when the database commit fails, then neither of them is persisted. |
-| PAY-06 | Given an existing payment, when I fetch it by order id, then I get `200`. |
-| PAY-07 | Given no payment for an order id, when I fetch it, then I get `404`. |
-
-### End to end
-
-| ID | Scenario |
-|---|---|
-| FLW-01 | Given a healthy system and an approving gateway, when I create an order, then it ends up `Paid`. |
-| FLW-02 | Given a declining gateway, when I create an order, then it ends up `PaymentFailed`. |
-| FLW-03 | Given `Payments.Api` is down, when I create an order, then it stays `Pending`, and becomes `Paid` after `Payments.Api` returns. |
+Control messages are diagnostic, not financially transactional. Local TTL bounds the effect when acknowledgements or abort messages cannot be delivered. Closed experiment tombstones are retained for the maximum command lifetime. Deliberately forged commands with reused IDs and rewritten future deadlines are outside the trusted localhost lab control model.
