@@ -1,62 +1,87 @@
 name: chaos-lab
 
+x-bus: &bus
+  RabbitMq__Host: rabbitmq
+  RabbitMq__User: ${RABBIT_USER:?Copy .env.example to .env and configure RABBIT_USER}
+  RabbitMq__Password: ${RABBIT_PASS:?Configure RABBIT_PASS in .env}
+  Telemetry__MetricsEndpoint: http://prometheus:9090/api/v1/otlp/v1/metrics
+  ASPNETCORE_ENVIRONMENT: Development
+
 services:
   rabbitmq:
-    image: rabbitmq:3.13-management
+    image: rabbitmq:3.13-management@sha256:e582c0bc7766f3342496d8485efb5a1df782b5ce3886ad017e2eaae442311f69
+    hostname: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBIT_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBIT_PASS}
-    ports: ["5672:5672", "15672:15672"]
+    ports: ["127.0.0.1:5672:5672", "127.0.0.1:15672:15672"]
+    volumes: ["rabbitdata:/var/lib/rabbitmq"]
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
+      test: ["CMD", "gosu", "rabbitmq", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 15
       start_period: 20s
 
-  # One instance in dev, but each service has ITS OWN database (OrdersDb / PaymentsDb).
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:4402d880dd4c34bfa7d8705e56a86cd6c88da80a1f6bbbe741f999e76264a090
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${SA_PASSWORD}
-    ports: ["1433:1433"]
+      MSSQL_MEMORY_LIMIT_MB: "1024"
+      MSSQL_SA_PASSWORD: ${SA_PASSWORD:?Configure SA_PASSWORD in .env}
+    ports: ["127.0.0.1:1433:1433"]
     volumes: ["sqldata:/var/opt/mssql"]
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          '/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q ''SELECT 1'' || exit 1',
-        ]
-      interval: 10s
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 5s
       timeout: 5s
-      retries: 12
+      retries: 20
       start_period: 20s
 
-  orders-api:
-    build: { context: ., args: { PROJECT: Orders.Api } }
-    depends_on:
-      rabbitmq: { condition: service_healthy }
-      sqlserver: { condition: service_healthy }
-    environment:
-      ConnectionStrings__Db: "Server=sqlserver;Database=OrdersDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
-      RabbitMq__Host: rabbitmq
-      RabbitMq__User: ${RABBIT_USER}
-      RabbitMq__Password: ${RABBIT_PASS}
-    ports: ["5001:8080"]
-
   payments-api:
-    build: { context: ., args: { PROJECT: Payments.Api } }
+    build: { context: ., network: "${BUILD_NETWORK:-default}", args: { PROJECT: Payments.Api } }
     depends_on:
       rabbitmq: { condition: service_healthy }
       sqlserver: { condition: service_healthy }
     environment:
+      <<: *bus
       ConnectionStrings__Db: "Server=sqlserver;Database=PaymentsDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
-      RabbitMq__Host: rabbitmq
-      RabbitMq__User: ${RABBIT_USER}
-      RabbitMq__Password: ${RABBIT_PASS}
       Gateway__FailureRate: "0"
-    ports: ["5002:8080"]
+      Chaos__Enabled: "true"
+    ports: ["127.0.0.1:5002:8080"]
+
+  orders-api:
+    build: { context: ., network: "${BUILD_NETWORK:-default}", args: { PROJECT: Orders.Api } }
+    depends_on:
+      payments-api: { condition: service_healthy }
+    environment:
+      <<: *bus
+      ConnectionStrings__Db: "Server=sqlserver;Database=OrdersDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+    ports: ["127.0.0.1:5001:8080"]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-otlp-receiver", "--storage.tsdb.retention.time=24h"]
+    volumes: ["./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro", "metricsdata:/prometheus"]
+    ports: ["127.0.0.1:9090:9090"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  chaos-worker:
+    build: { context: ., network: "${BUILD_NETWORK:-default}", args: { PROJECT: Chaos.Worker } }
+    depends_on:
+      orders-api: { condition: service_healthy }
+      prometheus: { condition: service_healthy }
+    environment:
+      <<: *bus
+      Chaos__Enabled: "true"
+      Prometheus__Url: http://prometheus:9090
+    ports: ["127.0.0.1:5003:8080"]
 
 volumes:
   sqldata:
+  rabbitdata:
+  metricsdata:

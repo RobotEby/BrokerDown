@@ -1,13 +1,16 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:35d40304542c8689331f8cab17c65926cdf48fe711e289321d71924b230a7d29 AS build
 ARG PROJECT
 WORKDIR /src
-COPY Directory.Build.props .
+COPY global.json Directory.Build.props ./
 COPY src/ src/
 RUN dotnet publish src/${PROJECT}/${PROJECT}.csproj -c Release -o /app
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:8.0@sha256:2f202e1169ec507bdc07007cf68c14d0ff3a098110b17c460a60185e1f36a9d1
 ARG PROJECT
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app .
 ENV ASPNETCORE_URLS=http://+:8080 APP_DLL=${PROJECT}.dll
-ENTRYPOINT ["sh", "-c", "exec dotnet $APP_DLL"]
+USER app
+HEALTHCHECK --interval=5s --timeout=4s --start-period=30s --retries=12 CMD curl --fail --silent http://localhost:8080/health/ready || exit 1
+ENTRYPOINT ["sh", "-c", "exec dotnet $APP_DLL \"$@\"", "--"]
