@@ -1,6 +1,7 @@
 extern alias OrdersApi;
 
 using MassTransit;
+using Microsoft.Extensions.Logging;
 using MassTransit.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,7 +32,8 @@ public sealed class OrdersConsumerHarness : IAsyncDisposable
 
         services.AddMassTransitTestHarness(x =>
         {
-            x.AddConsumer<PaymentProcessedConsumer>();
+            x.SetTestTimeouts(TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(1));
+            x.AddConsumer<PaymentProcessedConsumer, PaymentProcessedConsumerDefinition>();
             x.AddEntityFrameworkOutbox<OrdersDb>(o =>
             {
                 o.UseSqlServer();
@@ -39,6 +41,7 @@ public sealed class OrdersConsumerHarness : IAsyncDisposable
             });
         });
 
+        services.AddLogging(b => b.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Warning));
         var provider = services.BuildServiceProvider(validateScopes: true);
 
         using (var scope = provider.CreateScope())

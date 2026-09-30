@@ -14,24 +14,28 @@ public sealed class RabbitMqProbe<TMessage> : IAsyncDisposable where TMessage : 
     private RabbitMqProbe(IBusControl bus) => _bus = bus;
 
     public static async Task<RabbitMqProbe<TMessage>> StartAsync(
-        string host, ushort port, string user, string password)
+        string host, ushort port, string user, string password, string virtualHost = "/")
     {
         RabbitMqProbe<TMessage> probe = null!;
 
         var bus = Bus.Factory.CreateUsingRabbitMq(cfg =>
         {
-            cfg.Host(host, port, "/", h =>
+            cfg.Host(host, port, virtualHost, h =>
             {
                 h.Username(user);
                 h.Password(password);
             });
 
             cfg.ReceiveEndpoint(Guid.NewGuid().ToString("N"), e =>
+            {
+                e.AutoDelete = true;
+                e.Durable = false;
                 e.Handler<TMessage>(ctx =>
                 {
                     probe._received.TrySetResult(ctx.Message);
                     return Task.CompletedTask;
-                }));
+                });
+            });
         });
 
         probe = new RabbitMqProbe<TMessage>(bus);
@@ -39,14 +43,7 @@ public sealed class RabbitMqProbe<TMessage> : IAsyncDisposable where TMessage : 
         return probe;
     }
 
-    public async Task<TMessage> WaitAsync(TimeSpan timeout)
-    {
-        var winner = await Task.WhenAny(_received.Task, Task.Delay(timeout));
-        if (winner != _received.Task)
-            throw new TimeoutException($"No {typeof(TMessage).Name} was observed within {timeout}.");
-
-        return await _received.Task;
-    }
+    public Task<TMessage> WaitAsync(TimeSpan timeout) => _received.Task.WaitAsync(timeout);
 
     public async ValueTask DisposeAsync() => await _bus.StopAsync();
 }

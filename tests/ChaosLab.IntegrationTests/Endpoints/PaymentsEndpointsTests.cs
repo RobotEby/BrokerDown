@@ -13,28 +13,32 @@ using Xunit;
 namespace ChaosLab.IntegrationTests.Endpoints;
 
 [Collection(InfrastructureCollection.Name)]
+[Trait("Category", "Integration")]
 public class PaymentsEndpointsTests : IAsyncLifetime
 {
     private readonly InfrastructureFixture _infra;
     private PaymentsApiFactory _factory = null!;
     private HttpClient _client = null!;
+    private string _vhost = null!;
 
     public PaymentsEndpointsTests(InfrastructureFixture infra) => _infra = infra;
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
+        _vhost = await _infra.CreateVirtualHostAsync();
         var connectionString = ConnectionStrings.ForDatabase(_infra.Sql.GetConnectionString(), DbNames.New("Payments"));
         _factory = new PaymentsApiFactory(
             connectionString, _infra.Rabbit.Hostname, _infra.Rabbit.GetMappedPublicPort(5672),
-            "chaos", "chaos", Substitute.For<IPaymentGateway>());
+            "chaos", "chaos", Substitute.For<IPaymentGateway>(), _vhost);
         _client = _factory.CreateClient();
-        return Task.CompletedTask;
+        await _client.WaitUntilReadyAsync();
     }
 
     public async Task DisposeAsync()
     {
         _client.Dispose();
         await _factory.DisposeAsync();
+        await _infra.DeleteVirtualHostAsync(_vhost);
     }
 
     [Fact]

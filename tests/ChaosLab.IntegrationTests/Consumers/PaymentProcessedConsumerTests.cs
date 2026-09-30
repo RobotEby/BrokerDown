@@ -12,6 +12,7 @@ using Xunit;
 namespace ChaosLab.IntegrationTests.Consumers;
 
 [Collection(InfrastructureCollection.Name)]
+[Trait("Category", "Integration")]
 public class PaymentProcessedConsumerTests : IAsyncLifetime
 {
     private readonly InfrastructureFixture _infra;
@@ -60,7 +61,7 @@ public class PaymentProcessedConsumerTests : IAsyncLifetime
 
         (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == order.Id))
             .ShouldBeTrue();
-        await Settle.Briefly();
+        await _harness.Harness.InactivityTask;
 
         (await ReloadAsync(order.Id)).Status.ShouldBe(OrderStatus.Paid);
     }
@@ -76,7 +77,7 @@ public class PaymentProcessedConsumerTests : IAsyncLifetime
 
         (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == order.Id))
             .ShouldBeTrue();
-        await Settle.Briefly();
+        await _harness.Harness.InactivityTask;
 
         var updated = await ReloadAsync(order.Id);
         updated.Status.ShouldBe(OrderStatus.PaymentFailed);
@@ -94,7 +95,7 @@ public class PaymentProcessedConsumerTests : IAsyncLifetime
 
         (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == order.Id))
             .ShouldBeTrue();
-        await Settle.Briefly();
+        await _harness.Harness.InactivityTask;
 
         var updated = await ReloadAsync(order.Id);
         updated.Status.ShouldBe(OrderStatus.Paid);

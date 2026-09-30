@@ -11,7 +11,8 @@ public sealed class ToggleableFailureInterceptor : SaveChangesInterceptor
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
         DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
     {
-        if (ShouldFail)
+        if (ShouldFail && eventData.Context!.ChangeTracker.Entries()
+            .Any(e => e.Metadata.ClrType.Name == "Payment" && e.State == Microsoft.EntityFrameworkCore.EntityState.Added))
             throw new InvalidOperationException("Simulated commit failure");
 
         return base.SavingChangesAsync(eventData, result, cancellationToken);
