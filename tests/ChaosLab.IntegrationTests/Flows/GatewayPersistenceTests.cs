@@ -64,7 +64,8 @@ public sealed class GatewayPersistenceTests(InfrastructureFixture infra)
         var id = Guid.NewGuid();
         harness.Interceptor.ShouldFail = true;
         await harness.Harness.Bus.Publish(message, c => c.MessageId = id);
-        (await harness.Harness.Published.Any<Fault<OrderCreated>>()).ShouldBeTrue();
+        await Eventually.Until(() => harness.Harness.Published.Any<Fault<OrderCreated>>(), TimeSpan.FromSeconds(30),
+            description: "consumer fault published");
         (await harness.Harness.Consumed.Any<PaymentProcessed>()).ShouldBeFalse();
         await using (var db = Db(connection))
         {
@@ -78,7 +79,8 @@ public sealed class GatewayPersistenceTests(InfrastructureFixture infra)
             await using var db = Db(connection);
             return await db.Payments.AnyAsync(p => p.OrderId == message.OrderId);
         }, description: "redelivered payment committed");
-        (await harness.Harness.Consumed.Any<PaymentProcessed>()).ShouldBeTrue();
+        await Eventually.Until(() => harness.Harness.Consumed.Any<PaymentProcessed>(), TimeSpan.FromSeconds(30),
+            description: "PaymentProcessed consumed after redelivery");
         await using var verify = Db(connection);
         (await verify.SimulatedCharges.CountAsync()).ShouldBe(1);
         (await verify.Payments.CountAsync()).ShouldBe(1);
