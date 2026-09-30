@@ -1,10 +1,13 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Chaos.Worker/Chaos.Worker.csproj" />
+    <Project Path="src/Shared.Infrastructure/Shared.Infrastructure.csproj" />
     <Project Path="src/Orders.Api/Orders.Api.csproj" />
     <Project Path="src/Payments.Api/Payments.Api.csproj" />
     <Project Path="src/Shared.Contracts/Shared.Contracts.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Chaos.UnitTests/Chaos.UnitTests.csproj" />
     <Project Path="tests/ChaosLab.IntegrationTests/ChaosLab.IntegrationTests.csproj" />
     <Project Path="tests/Payments.UnitTests/Payments.UnitTests.csproj" />
   </Folder>

@@ -13,3 +13,5 @@ Todo documento existe em dois idiomas, com o mesmo nome de arquivo.
 | 06 | Testing strategy / Estratégia de testes | [en](en/06-testing-strategy.md) | [pt-BR](pt-BR/06-testing-strategy.md) |
 | 07 | Development workflow / Fluxo de desenvolvimento | [en](en/07-development-workflow.md) | [pt-BR](pt-BR/07-development-workflow.md) |
 | 08 | Roadmap | [en](en/08-roadmap.md) | [pt-BR](pt-BR/08-roadmap.md) |
+| 09 | Observability / Observabilidade | [en](en/09-observability.md) | [pt-BR](pt-BR/09-observability.md) |
+| 10 | Measured validation / Validação medida | [en](en/10-validation.md) | [pt-BR](pt-BR/10-validation.md) |

@@ -2,6 +2,7 @@ extern alias PaymentsApi;
 
 using ChaosLab.IntegrationTests.Infrastructure;
 using MassTransit;
+using MassTransit.EntityFrameworkCoreIntegration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
@@ -14,6 +15,7 @@ using Xunit;
 namespace ChaosLab.IntegrationTests.Consumers;
 
 [Collection(InfrastructureCollection.Name)]
+[Trait("Category", "Integration")]
 public class OrderCreatedConsumerTests : IAsyncLifetime
 {
     private readonly InfrastructureFixture _infra;
@@ -40,7 +42,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
 
         await _harness.Harness.Bus.Publish(new OrderCreated(orderId, Guid.NewGuid(), 149.90m, DateTimeOffset.UtcNow));
 
-        (await _harness.Harness.Published.Any<PaymentProcessed>(
+        (await _harness.Harness.Consumed.Any<PaymentProcessed>(
             m => m.Context.Message.OrderId == orderId && m.Context.Message.Success)).ShouldBeTrue();
 
         using var scope = _harness.Services.CreateScope();
@@ -62,7 +64,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
 
         await _harness.Harness.Bus.Publish(new OrderCreated(orderId, Guid.NewGuid(), 149.90m, DateTimeOffset.UtcNow));
 
-        (await _harness.Harness.Published.Any<PaymentProcessed>(
+        (await _harness.Harness.Consumed.Any<PaymentProcessed>(
             m => m.Context.Message.OrderId == orderId && !m.Context.Message.Success)).ShouldBeTrue();
 
         using var scope = _harness.Services.CreateScope();
@@ -99,7 +101,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
         (await _harness.Harness.Consumed.Any<OrderCreated>(m => m.Context.Message.OrderId == orderId)).ShouldBeTrue();
 
         await _gateway.DidNotReceive().ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>());
-        (await _harness.Harness.Published.Any<PaymentProcessed>(m => m.Context.Message.OrderId == orderId))
+        (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == orderId))
             .ShouldBeFalse();
 
         using var verify = _harness.Services.CreateScope();
@@ -122,9 +124,9 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
         await _harness.Harness.Bus.Publish(message, ctx => ctx.MessageId = messageId);
         await _harness.Harness.Bus.Publish(message, ctx => ctx.MessageId = messageId);
 
-        (await _harness.Harness.Published.Any<PaymentProcessed>(m => m.Context.Message.OrderId == orderId))
+        (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == orderId))
             .ShouldBeTrue();
-        await Settle.Briefly(); // give a would-be duplicate a chance to arrive and be filtered
+        await _harness.Harness.InactivityTask;
 
         await _gateway.Received(1).ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>());
 
@@ -147,12 +149,13 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
 
         (await _harness.Harness.Published.Any<Fault<OrderCreated>>()).ShouldBeTrue();
 
-        // The Payment row and its outbox event are written in the same
-        // SaveChanges call, so a Payments count of 0 proves both were rolled
-        // back together — the atomicity guarantee this scenario is about.
+        (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == orderId))
+            .ShouldBeFalse();
         using var scope = _harness.Services.CreateScope();
         var count = await scope.ServiceProvider.GetRequiredService<PaymentsDb>()
             .Payments.CountAsync(p => p.OrderId == orderId);
         count.ShouldBe(0);
+        (await scope.ServiceProvider.GetRequiredService<PaymentsDb>().Set<OutboxMessage>().CountAsync()).ShouldBe(0);
+        await _gateway.Received(1).ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>());
     }
 }

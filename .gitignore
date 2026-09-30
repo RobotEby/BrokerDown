@@ -2,3 +2,6 @@ bin/
 obj/
 .vs/
 .env
+**/TestResults/
+artifacts/
+**/__pycache__/

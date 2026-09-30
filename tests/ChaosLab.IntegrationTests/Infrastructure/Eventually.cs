@@ -1,20 +1,29 @@
+using System.Diagnostics;
+
 namespace ChaosLab.IntegrationTests.Infrastructure;
 
 // Polls an async condition instead of sleeping a fixed amount, so tests are
 // fast on the happy path and tolerant of real infrastructure timing.
 public static class Eventually
 {
-    public static async Task Until(Func<Task<bool>> condition, TimeSpan? timeout = null, TimeSpan? interval = null)
+    public static async Task Until(Func<Task<bool>> condition, TimeSpan? timeout = null,
+        TimeSpan? interval = null, string? description = null, CancellationToken ct = default, Func<string>? diagnostic = null)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
-        var delay = interval ?? TimeSpan.FromMilliseconds(100);
-
-        while (DateTime.UtcNow < deadline)
+        var limit = timeout ?? TimeSpan.FromSeconds(15);
+        var watch = Stopwatch.StartNew();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(limit);
+        try
         {
-            if (await condition()) return;
-            await Task.Delay(delay);
+            while (true)
+            {
+                if (await condition().WaitAsync(deadline.Token)) return;
+                await Task.Delay(interval ?? TimeSpan.FromMilliseconds(100), deadline.Token);
+            }
         }
-
-        throw new TimeoutException("Condition was not met within the timeout.");
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException($"{description ?? "Condition"} was not met after {watch.Elapsed} (limit {limit}). Last state: {diagnostic?.Invoke() ?? "condition returned false"}");
+        }
     }
 }

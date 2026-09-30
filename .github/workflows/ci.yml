@@ -1,0 +1,45 @@
+name: validate
+on: [push, pull_request]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            10.0.x
+            8.0.x
+      - run: dotnet restore ChaosLab.NET.slnx
+      - run: dotnet build ChaosLab.NET.slnx --no-restore -c Release
+      - run: dotnet test tests/Payments.UnitTests --no-build -c Release --logger "trx;LogFileName=payments-unit.trx" --results-directory artifacts --diag artifacts/payments-unit.log
+      - run: dotnet test tests/Chaos.UnitTests --no-build -c Release --logger "trx;LogFileName=chaos-unit.trx" --results-directory artifacts --diag artifacts/chaos-unit.log
+      - run: dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter 'Category!=Chaos' --logger "trx;LogFileName=integration.trx" --results-directory artifacts --diag artifacts/integration.log
+      - run: dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter 'Category=Chaos' --logger "trx;LogFileName=chaos.trx" --results-directory artifacts --diag artifacts/chaos.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tests
+          path: artifacts/
+
+  demo:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose up -d --build --wait --wait-timeout 180
+      - run: python3 scripts/demo.py --scenario all --output artifacts/demo.json
+      - if: always()
+        run: |
+          mkdir -p artifacts
+          docker compose logs --no-color > artifacts/compose.log
+          docker compose down
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo
+          path: artifacts/

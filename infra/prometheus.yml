@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+otlp:
+  translation_strategy: UnderscoreEscapingWithSuffixes
+  promote_resource_attributes: [service.name]
+
+storage:
+  tsdb:
+    out_of_order_time_window: 30s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

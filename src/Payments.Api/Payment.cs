@@ -1,5 +1,6 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Payments.Api.Gateways;
 
 namespace Payments.Api;
 
@@ -19,9 +20,11 @@ public class Payment
 public class PaymentsDb(DbContextOptions<PaymentsDb> options) : DbContext(options)
 {
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<SimulatedCharge> SimulatedCharges => Set<SimulatedCharge>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<SimulatedCharge>(SimulatedCharge.Configure);
         b.Entity<Payment>(e =>
         {
             e.HasKey(p => p.Id);

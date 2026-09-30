@@ -1,11 +1,13 @@
 extern alias PaymentsApi;
 
 using MassTransit;
+using Microsoft.Extensions.Logging;
 using MassTransit.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PaymentsApi::Payments.Api;
 using PaymentsApi::Payments.Api.Gateways;
+using Shared.Contracts;
 
 namespace ChaosLab.IntegrationTests.Infrastructure;
 
@@ -38,7 +40,9 @@ public sealed class PaymentsConsumerHarness : IAsyncDisposable
 
         services.AddMassTransitTestHarness(x =>
         {
-            x.AddConsumer<OrderCreatedConsumer>();
+            x.SetTestTimeouts(TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(1));
+            x.AddConsumer<OrderCreatedConsumer, OrderCreatedConsumerDefinition>();
+            x.AddConsumer<PaymentResultProbe>();
             x.AddEntityFrameworkOutbox<PaymentsDb>(o =>
             {
                 o.UseSqlServer();
@@ -46,6 +50,7 @@ public sealed class PaymentsConsumerHarness : IAsyncDisposable
             });
         });
 
+        services.AddLogging(b => b.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Warning));
         var provider = services.BuildServiceProvider(validateScopes: true);
 
         using (var scope = provider.CreateScope())
@@ -62,4 +67,9 @@ public sealed class PaymentsConsumerHarness : IAsyncDisposable
         await Harness.Stop();
         await _provider.DisposeAsync();
     }
+}
+
+public sealed class PaymentResultProbe : IConsumer<PaymentProcessed>
+{
+    public Task Consume(ConsumeContext<PaymentProcessed> context) => Task.CompletedTask;
 }

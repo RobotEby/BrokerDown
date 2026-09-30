@@ -13,27 +13,31 @@ using Xunit;
 namespace ChaosLab.IntegrationTests.Endpoints;
 
 [Collection(InfrastructureCollection.Name)]
+[Trait("Category", "Integration")]
 public class OrdersEndpointsTests : IAsyncLifetime
 {
     private readonly InfrastructureFixture _infra;
     private OrdersApiFactory _factory = null!;
     private HttpClient _client = null!;
+    private string _vhost = null!;
 
     public OrdersEndpointsTests(InfrastructureFixture infra) => _infra = infra;
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
+        _vhost = await _infra.CreateVirtualHostAsync();
         var connectionString = ConnectionStrings.ForDatabase(_infra.Sql.GetConnectionString(), DbNames.New("Orders"));
         _factory = new OrdersApiFactory(
-            connectionString, _infra.Rabbit.Hostname, _infra.Rabbit.GetMappedPublicPort(5672), "chaos", "chaos");
+            connectionString, _infra.Rabbit.Hostname, _infra.Rabbit.GetMappedPublicPort(5672), "chaos", "chaos", _vhost);
         _client = _factory.CreateClient();
-        return Task.CompletedTask;
+        await _client.WaitUntilReadyAsync();
     }
 
     public async Task DisposeAsync()
     {
         _client.Dispose();
         await _factory.DisposeAsync();
+        await _infra.DeleteVirtualHostAsync(_vhost);
     }
 
     [Fact]
@@ -41,7 +45,7 @@ public class OrdersEndpointsTests : IAsyncLifetime
     public async Task PostOrders_ValidRequest_AcceptsStoresAsPendingAndPublishesOrderCreated()
     {
         await using var probe = await RabbitMqProbe<OrderCreated>.StartAsync(
-            _infra.Rabbit.Hostname, _infra.Rabbit.GetMappedPublicPort(5672), "chaos", "chaos");
+            _infra.Rabbit.Hostname, _infra.Rabbit.GetMappedPublicPort(5672), "chaos", "chaos", _vhost);
 
         var customerId = Guid.NewGuid();
         var response = await _client.PostAsJsonAsync("/orders", new CreateOrderRequest(customerId, 149.90m));
@@ -61,17 +65,23 @@ public class OrdersEndpointsTests : IAsyncLifetime
         published.CustomerId.ShouldBe(customerId);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData("0", false)]
+    [InlineData("-1", false)]
+    [InlineData("0.001", false)]
+    [InlineData("10000000000000000", false)]
+    [InlineData("10", true)]
     [Trait("Scenario", "ORD-02")]
-    public async Task PostOrders_AmountIsZeroOrNegative_ReturnsBadRequestAndPersistsNothing()
+    public async Task PostOrders_InvalidRequest_ReturnsBadRequestAndPersistsNothing(string amount, bool emptyCustomer)
     {
-        var response = await _client.PostAsJsonAsync("/orders", new CreateOrderRequest(Guid.NewGuid(), 0m));
+        var response = await _client.PostAsJsonAsync("/orders", new CreateOrderRequest(emptyCustomer ? Guid.Empty : Guid.NewGuid(), decimal.Parse(amount, System.Globalization.CultureInfo.InvariantCulture)));
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
 
         using var scope = _factory.Services.CreateScope();
         var count = await scope.ServiceProvider.GetRequiredService<OrdersDb>().Orders.CountAsync();
         count.ShouldBe(0);
+        (await scope.ServiceProvider.GetRequiredService<OrdersDb>().Set<MassTransit.EntityFrameworkCoreIntegration.OutboxMessage>().CountAsync()).ShouldBe(0);
     }
 
     [Fact]

@@ -1,87 +1,102 @@
 # ChaosLab.NET
 
-[Português (Brasil)](README.pt-BR.md)
+[Português](README.pt-BR.md)
 
-An event-driven microservices system on .NET 8. I'm building it as a lab for resilience and chaos engineering, in a deliberate order: first a solid, well-tested foundation, then the failure injection on top of it.
-
-## What it does today
-
-A customer places an order. `Orders.Api` accepts it immediately (`202 Accepted`) and hands the payment over to `Payments.Api` through RabbitMQ. When the payment result comes back, the order is marked as paid or failed. The two services never call each other directly, and each one owns its database.
-
-## Architecture at a glance
+A .NET laboratory for asynchronous orders, durable payment idempotency and controlled chaos. Orders return `202 Accepted` after SQL persistence. Payment processing and status convergence happen through RabbitMQ.
 
 ```mermaid
 flowchart LR
-    Client([Client]) -->|POST /orders| Orders[Orders.Api]
-    Orders --- ODB[(OrdersDb)]
-    Orders -->|OrderCreated| MQ{{RabbitMQ}}
-    MQ -->|OrderCreated| Payments[Payments.Api]
-    Payments --- PDB[(PaymentsDb)]
-    Payments -->|charge| GW[Simulated gateway]
-    Payments -->|PaymentProcessed| MQ
-    MQ -->|PaymentProcessed| Orders
+    Client -->|POST /orders: 202| Orders[Orders.Api]
+    Orders --- ODB[(OrdersDb + Inbox/Outbox)]
+    Orders <-->|OrderCreated / PaymentProcessed| MQ[RabbitMQ]
+    MQ <--> Payments[Payments.Api]
+    Payments --- PDB[(PaymentsDb + Inbox/Outbox)]
+    Payments --> Primary[Primary gateway]
+    Payments --> Fallback[Fallback gateway]
+    Primary & Fallback --> Ledger[(SimulatedCharges)]
+    Orders & Payments -->|OTLP HTTP every 5s| Prom[Prometheus]
+    Worker[Chaos.Worker] -->|safety queries| Prom
+    Worker <-->|commands / acknowledgements| MQ
+    Operator -->|one experiment request| Worker
 ```
 
-## Quick start
+Both gateways run inside Payments and share a durable charge ledger, committed independently of the consumer transaction. There is no external payment provider.
 
-You only need Docker with Compose.
+## Run
+
+Requires Docker Compose with Linux containers (SQL Server: x86-64). Python 3 runs the demonstration. Local builds/tests need a stable .NET 10 SDK and the .NET 8 ASP.NET runtime; `global.json` accepts compatible SDK 10 feature bands for `.slnx`.
 
 ```bash
-docker compose up -d --build
+cp .env.example .env  # first setup only; preserve an existing .env
+docker compose up -d --build --wait --wait-timeout 180
+docker compose ps
+python3 scripts/demo.py --scenario all --output artifacts/demo.json
 ```
 
-Place an order and follow it:
+**Existing pre-migration PaymentsDb?** Follow the [backup and explicit adoption procedure](docs/en/05-docker-environment.md#legacy-payments-database) before starting Payments. Unknown schemas are refused, without recreating data.
+
+| Interface | Address |
+|---|---|
+| Orders | http://localhost:5001 |
+| Payments | http://localhost:5002 |
+| Chaos control | http://localhost:5003/chaos |
+| Prometheus | http://localhost:9090 |
+| RabbitMQ management | http://localhost:15672 |
+| SQL Server | localhost,1433 |
+
+Published ports bind to localhost. Credentials come from your ignored `.env`. `GET /health` is liveness; `GET /health/ready` checks dependencies and returns 503 when degraded.
 
 ```bash
-curl -X POST http://localhost:5001/orders \
-  -H "Content-Type: application/json" \
+curl -i http://localhost:5001/orders -H 'Content-Type: application/json' \
   -d '{"customerId":"3fa85f64-5717-4562-b3fc-2c963f66afa6","amount":149.90}'
-
-curl http://localhost:5001/orders/<id>      # Pending, then Paid within a second or so
-curl http://localhost:5002/payments/<id>
+curl http://localhost:5001/orders/ORDER_ID
+curl http://localhost:5002/payments/ORDER_ID
 ```
 
-| Service      | URL                                      |
-| ------------ | ---------------------------------------- |
-| Orders.Api   | http://localhost:5001                    |
-| Payments.Api | http://localhost:5002                    |
-| RabbitMQ UI  | http://localhost:15672 (`chaos` / `chaos`) |
-| SQL Server   | `localhost,1433` (`sa`, password in `.env`) |
+The initial status is `Pending`, followed by `Paid` or `PaymentFailed`. Customer ID must be nonempty; amount must be positive, fit decimal(18,2), and have at most two decimal places.
 
-The credentials in `.env` are for local development only.
+## Demonstrate chaos
 
-## See the outbox working
+The script supports `--scenario normal|latency|unavailable|rabbitmq|all`. It generates traffic, waits for safe metrics and cooldown, checks fallback/recovery, and verifies one charge per order in SQL. The RabbitMQ scenario stops the real broker and restores it in a `finally` block. Errors request abort; the target independently enforces TTL.
+
+The `all` scenario ends by checking the kill switch. Reset explicitly with `docker compose restart payments-api chaos-worker` before another experiment.
+
+Manual control (generate ten recent completed orders first):
 
 ```bash
-docker compose stop rabbitmq
-# create an order: it still returns 202 and stays Pending
-docker compose start rabbitmq
-# moments later the order becomes Paid, and no event was lost
+curl http://localhost:5003/chaos
+curl -i http://localhost:5003/chaos/experiments -H 'Content-Type: application/json' \
+  -d '{"fault":"Latency","durationSeconds":30,"latencyMilliseconds":2000}'
+curl -X POST http://localhost:5003/chaos/abort
+curl -X POST http://localhost:5003/chaos/kill-switch
 ```
 
-## Project layout
+One request creates at most one experiment. Every 5s the worker checks healthy services, data no older than 15s, ten completed orders/minute, final failures ≤5%, and end-to-end p95 ≤10s. It waits at most 60s for safe conditions. Activation requires Payments acknowledgement within 10s. Loss of safety requests abort. Duration defaults to 30s (maximum 60s), latency to 2s (maximum 5s), cooldown to 60s including startup. Chaos is disabled by default and blocked in Production. Compose enables Development mode without starting experiments.
 
+## Reliability and limits
+
+- Bus Outbox commits order and event together; Consumer Outbox/Inbox protects business handlers and their results.
+- SQL uniqueness on `OrderId` protects payments and simulated charges. The first terminal order transition wins atomically.
+- Polly per gateway: Retry → Circuit Breaker → Timeout. Two retries, exponential jitter from 200ms, 1s per attempt; circuit window 30s, minimum four attempts, 50% threshold, 10s break.
+- Commercial declines and original cancellation do not retry or fall back. Infrastructure failures reconcile the ledger before fallback.
+- Durable topology must exist before publishing. Compose starts Payments before Orders; `--deploy-topology` supports separate deployments.
+- Messaging is at least once. The single-charge guarantee depends on the shared simulated ledger; independent real providers need provider idempotency and reconciliation.
+- One worker and one Payments target are supported. Experiment state is process-local. Gateway calls hold a consumer transaction open; this is a bounded lab workload, not a throughput benchmark.
+
+## Test and inspect
+
+```bash
+dotnet restore ChaosLab.NET.slnx
+dotnet build ChaosLab.NET.slnx --no-restore -c Release
+dotnet test ChaosLab.NET.slnx --no-build -c Release --logger trx --results-directory artifacts
+dotnet test ChaosLab.NET.slnx --no-build -c Release --filter Category=Unit
+dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter Category=Integration
+dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release \
+  --filter FullyQualifiedName~Order_BrokerUnavailable_StillAcceptedAndDeliveredOnceBrokerReturns
 ```
-src/
-  Shared.Contracts/   integration events shared by the services
-  Orders.Api/         order intake and order status
-  Payments.Api/       payment processing behind a gateway abstraction
-docs/                 architecture, flows, reliability, testing (EN and PT-BR)
-```
 
-## Tests
+Integration tests start their own containers, with a database and vhost per test. The broker recovery budget remains 120s. CI runs unit, integration and chaos tests plus the real Compose demonstration, publishing TRX and logs.
 
-I'm working test-first from here on. The suite includes unit coverage for the simulated payment gateway and integration coverage for consumers, endpoints, and the end-to-end order flow with Testcontainers. The strategy is in [docs/en/06-testing-strategy.md](docs/en/06-testing-strategy.md).
+Metrics go directly from the stable OpenTelemetry OTLP/HTTP exporter to Prometheus, without a Collector. See [PromQL](docs/en/09-observability.md), [measured validation](docs/en/10-validation.md) and the [documentation index](docs/README.md).
 
-## Documentation
-
-Start at the [documentation index](docs/README.md). The most useful entry points:
-
-- [Architecture](docs/en/02-architecture.md)
-- [Message flow and behavior scenarios](docs/en/03-message-flow.md)
-- [Reliability: outbox, inbox, idempotency](docs/en/04-reliability.md)
-- [Docker environment](docs/en/05-docker-environment.md)
-
-## Roadmap
-
-Next comes resilience (Polly, a fallback gateway, observability), then the chaos engine itself. Details in [docs/en/08-roadmap.md](docs/en/08-roadmap.md).
+Stack: net8.0, EF Core 9.0.1, MassTransit 8.5.10, Polly 8.6.1, OpenTelemetry 1.18.0, SQL Server 2022, RabbitMQ 3.13, Prometheus 3.5.0. Image digests and package versions are pinned. Grafana, a trace backend, YARP, Keycloak, Catalog, Redis and gRPC remain [future work](docs/en/08-roadmap.md).

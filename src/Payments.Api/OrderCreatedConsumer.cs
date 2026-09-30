@@ -11,9 +11,12 @@ public class OrderCreatedConsumer(PaymentsDb db, IPaymentGateway gateway, ILogge
     public async Task Consume(ConsumeContext<OrderCreated> ctx)
     {
         var m = ctx.Message;
+        if (m.OrderId == Guid.Empty || m.CustomerId == Guid.Empty || !Money.IsValid(m.Amount))
+            throw new ArgumentException("OrderCreated contains an invalid customer, order or monetary amount");
 
-        if (await db.Payments.AnyAsync(p => p.OrderId == m.OrderId, ctx.CancellationToken))
+        if (await db.Payments.SingleOrDefaultAsync(p => p.OrderId == m.OrderId, ctx.CancellationToken) is { } existing)
         {
+            if (existing.Amount != m.Amount) throw new ArgumentException("OrderId was reused with a different amount");
             log.LogInformation("Pedido {OrderId} já processado, ignorando", m.OrderId);
             return;
         }
@@ -32,8 +35,10 @@ public class OrderCreatedConsumer(PaymentsDb db, IPaymentGateway gateway, ILogge
         });
 
         await ctx.Publish(new PaymentProcessed(
-            m.OrderId, result.Success, result.Gateway, result.FailureReason, DateTimeOffset.UtcNow));
+            m.OrderId, result.Success, result.Gateway, result.FailureReason, DateTimeOffset.UtcNow), ctx.CancellationToken);
 
         await db.SaveChangesAsync(ctx.CancellationToken);
+        PaymentTelemetry.Completed.Add(1, new("status", result.Success ? "approved" : "declined"), new("gateway", result.Gateway));
+        log.LogInformation("Payment for {OrderId}: {Success} via {Gateway}", m.OrderId, result.Success, result.Gateway);
     }
 }
