@@ -8,7 +8,7 @@ public record ExperimentRequest(ChaosFault Fault, int DurationSeconds = 30, int 
 public record ExperimentRun(Guid ExperimentId, ChaosFault Fault, int DurationSeconds, int LatencyMilliseconds,
     string Status, DateTimeOffset RequestedAt, DateTimeOffset? DispatchedAt = null, DateTimeOffset? ExpiresAt = null, string? Reason = null);
 
-// ponytail: one worker instance and one active experiment; state is deliberately process-local.
+// NOTE: one worker instance and one active experiment; state is deliberately process-local.
 public sealed class ChaosCoordinator
 {
     private readonly object _sync = new();

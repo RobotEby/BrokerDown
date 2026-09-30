@@ -17,7 +17,7 @@ public class OrderCreatedConsumer(PaymentsDb db, IPaymentGateway gateway, ILogge
         if (await db.Payments.SingleOrDefaultAsync(p => p.OrderId == m.OrderId, ctx.CancellationToken) is { } existing)
         {
             if (existing.Amount != m.Amount) throw new ArgumentException("OrderId was reused with a different amount");
-            log.LogInformation("Pedido {OrderId} já processado, ignorando", m.OrderId);
+            log.LogInformation("Order {OrderId} already processed, ignoring", m.OrderId);
             return;
         }
 
