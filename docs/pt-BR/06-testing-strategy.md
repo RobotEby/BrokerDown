@@ -3,7 +3,7 @@
 | Categoria | Escopo |
 |---|---|
 | Unit | Retry/recusa/timeout/cancelamento/circuito; TTL/abort/Production; segurança/confirmação/cooldown/kill switch |
-| Integration | SQL, consumidores EF Inbox/Outbox, endpoints, broker, duplicação/concorrência, migração legada |
+| Integration | SQL, consumidores EF Inbox/Outbox, endpoints, broker, duplicação/concorrência |
 | Chaos | Stop/start real do broker e latência/indisponibilidade em Payments via RabbitMQ |
 
 Harnesses usam SQL real e o middleware de produção, com transporte em memória e consumidor de resultados. Testes ponta a ponta usam RabbitMQ real. Cada teste tem banco(s) isolado(s); testes com broker usam vhost próprio. Fixtures compartilham somente processos de containers. Polling usa condições observáveis e prazos.

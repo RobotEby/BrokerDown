@@ -3,8 +3,6 @@ extern alias PaymentsApi;
 using ChaosLab.IntegrationTests.Infrastructure;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PaymentsApi::Payments.Api;
@@ -30,7 +28,7 @@ public sealed class GatewayPersistenceTests(InfrastructureFixture infra)
     {
         var connection = Connection();
         await using var db = Db(connection);
-        await PaymentsDatabase.InitializeAsync(db, false, default);
+        await PaymentsDatabase.InitializeAsync(db, default);
         var ledger = Ledger(connection);
         IPaymentGateway primary = new SimulatedPrimaryGateway(ledger, Config());
         IPaymentGateway fallback = new SimulatedFallbackGateway(ledger, Config());
@@ -49,7 +47,7 @@ public sealed class GatewayPersistenceTests(InfrastructureFixture infra)
     {
         var connection = Connection();
         await using var db = Db(connection);
-        await PaymentsDatabase.InitializeAsync(db, false, default);
+        await PaymentsDatabase.InitializeAsync(db, default);
         var request = new ChargeRequest(Guid.NewGuid(), 20m);
         var result = await new SimulatedPrimaryGateway(Ledger(connection), Config(rate)).ChargeAsync(request, default);
         result.Success.ShouldBe(approved);
@@ -66,7 +64,8 @@ public sealed class GatewayPersistenceTests(InfrastructureFixture infra)
         var id = Guid.NewGuid();
         harness.Interceptor.ShouldFail = true;
         await harness.Harness.Bus.Publish(message, c => c.MessageId = id);
-        (await harness.Harness.Published.Any<Fault<OrderCreated>>()).ShouldBeTrue();
+        await Eventually.Until(() => harness.Harness.Published.Any<Fault<OrderCreated>>(), TimeSpan.FromSeconds(30),
+            description: "consumer fault published");
         (await harness.Harness.Consumed.Any<PaymentProcessed>()).ShouldBeFalse();
         await using (var db = Db(connection))
         {
@@ -80,7 +79,8 @@ public sealed class GatewayPersistenceTests(InfrastructureFixture infra)
             await using var db = Db(connection);
             return await db.Payments.AnyAsync(p => p.OrderId == message.OrderId);
         }, description: "redelivered payment committed");
-        (await harness.Harness.Consumed.Any<PaymentProcessed>()).ShouldBeTrue();
+        await Eventually.Until(() => harness.Harness.Consumed.Any<PaymentProcessed>(), TimeSpan.FromSeconds(30),
+            description: "PaymentProcessed consumed after redelivery");
         await using var verify = Db(connection);
         (await verify.SimulatedCharges.CountAsync()).ShouldBe(1);
         (await verify.Payments.CountAsync()).ShouldBe(1);
@@ -103,34 +103,6 @@ public sealed class GatewayPersistenceTests(InfrastructureFixture infra)
         (await verify.SimulatedCharges.CountAsync()).ShouldBe(1);
         (await verify.Payments.CountAsync()).ShouldBe(1);
         harness.Harness.Consumed.Select<PaymentProcessed>().Count().ShouldBe(1);
-    }
-
-    [Fact]
-    public async Task LegacyDatabase_RequiresExplicitAdoption_PreservesExistingPayment()
-    {
-        var connection = Connection();
-        await using var db = Db(connection);
-        await db.GetService<IMigrator>().MigrateAsync("InitialPayments");
-        var orderId = Guid.NewGuid();
-        db.Payments.Add(new Payment { Id = Guid.NewGuid(), OrderId = orderId, Amount = 10m, Gateway = "primary", Status = PaymentStatus.Approved, CreatedAt = DateTimeOffset.UtcNow });
-        await db.SaveChangesAsync();
-        await db.Database.ExecuteSqlRawAsync("DROP TABLE [__EFMigrationsHistory]");
-        await Should.ThrowAsync<InvalidOperationException>(() => PaymentsDatabase.InitializeAsync(db, false, default));
-        await PaymentsDatabase.InitializeAsync(db, true, default);
-        await PaymentsDatabase.InitializeAsync(db, false, default);
-        (await db.Payments.SingleAsync()).OrderId.ShouldBe(orderId);
-        (await db.Database.GetAppliedMigrationsAsync()).Count().ShouldBe(2);
-        (await db.SimulatedCharges.CountAsync()).ShouldBe(0);
-    }
-
-    [Fact]
-    public async Task UnknownLegacySchema_IsRejectedWithoutDroppingData()
-    {
-        await using var db = Db(Connection());
-        await db.GetService<IMigrator>().MigrateAsync("InitialPayments");
-        await db.Database.ExecuteSqlRawAsync("DROP TABLE [__EFMigrationsHistory]; ALTER TABLE [Payments] ADD [Unexpected] int NULL;");
-        await Should.ThrowAsync<InvalidOperationException>(() => PaymentsDatabase.InitializeAsync(db, true, default));
-        (await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS Value FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='Payments' AND COLUMN_NAME='Unexpected'").SingleAsync()).ShouldBe(1);
     }
 
     private sealed class GatewayFactory(string connection) : IDbContextFactory<SimulatedGatewayDb>

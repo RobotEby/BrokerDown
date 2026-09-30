@@ -5,7 +5,7 @@ using Payments.Api.Gateways;
 
 namespace Payments.Api.Chaos;
 
-// ponytail: one local target instance; distributed experiment coordination belongs in a future deployment.
+// NOTE: one local target instance; distributed experiment coordination belongs in a future deployment.
 public sealed class ChaosState : IDisposable
 {
     private readonly System.Diagnostics.Metrics.Meter _meter = new("ChaosLab.Chaos");

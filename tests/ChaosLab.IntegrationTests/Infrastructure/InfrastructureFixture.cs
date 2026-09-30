@@ -12,13 +12,13 @@ namespace ChaosLab.IntegrationTests.Infrastructure;
 public sealed class InfrastructureFixture : IAsyncLifetime
 {
     public MsSqlContainer Sql { get; } = new MsSqlBuilder()
-        .WithImage("mcr.microsoft.com/mssql/server@sha256:4402d880dd4c34bfa7d8705e56a86cd6c88da80a1f6bbbe741f999e76264a090")
+        .WithImage("mcr.microsoft.com/mssql/server:2022-latest@sha256:4402d880dd4c34bfa7d8705e56a86cd6c88da80a1f6bbbe741f999e76264a090")
         .WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "1024")
         .WithPassword("Str0ng!Passw0rd")
         .Build();
 
     public RabbitMqContainer Rabbit { get; } = new RabbitMqBuilder()
-        .WithImage("rabbitmq@sha256:e582c0bc7766f3342496d8485efb5a1df782b5ce3886ad017e2eaae442311f69")
+        .WithImage("rabbitmq:3.13-management@sha256:e582c0bc7766f3342496d8485efb5a1df782b5ce3886ad017e2eaae442311f69")
         .WithPortBinding(AvailablePort(), 5672)
         .WithUsername("chaos")
         .WithPassword("chaos")

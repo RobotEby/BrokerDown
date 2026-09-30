@@ -14,22 +14,6 @@ Não apague volumes para resolver migrations. Credenciais existentes pertencem a
 
 Readiness de SQL/RabbitMQ precede Payments; readiness de Payments precede Orders, garantindo fila consumidora antes da publicação. As sondas RabbitMQ rodam como rabbitmq para evitar cookie Erlang criado por root. O hostname fica estável após reinícios.
 
-## Banco Payments legado
-
-Bancos novos usam migrations automaticamente. Bancos criados pela versão com EnsureCreated exigem adoção explícita. Pare os escritores, faça backup e execute:
-
-```bash
-docker compose stop chaos-worker orders-api payments-api
-docker compose up -d --wait sqlserver rabbitmq
-docker compose exec -T sqlserver sh -c 'exec /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -b -Q "BACKUP DATABASE PaymentsDb TO DISK = '\''/var/opt/mssql/data/PaymentsDb-before-migrations.bak'\'' WITH COPY_ONLY, CHECKSUM"'
-docker compose run --rm --no-deps payments-api --adopt-legacy-database
-docker compose up -d --wait --wait-timeout 180
-```
-
-O backup fica em sqldata; copie-o também para fora do volume para retenção prolongada. A adoção verifica colunas/tipos/nulabilidade e índices de idempotência, registra a migration inicial e adiciona SimulatedCharges. Preserva pagamentos existentes, sem inventar cobranças históricas. Schema desconhecido gera diagnóstico. Repetir adoção/inicialização é seguro. Revise migrations em vez de editar o histórico manualmente.
-
-Orders mantém EnsureCreated porque seu schema não mudou. Evolução desse schema exigirá baseline próprio.
-
 ## Implantação separada da topologia
 
 Antes de liberar o primeiro publicador em um vhost limpo:

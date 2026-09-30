@@ -7,11 +7,11 @@ using Payments.Api;
 using Payments.Api.Gateways;
 using Payments.Api.Chaos;
 
-var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology" and not "--adopt-legacy-database").ToArray());
+var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology").ToArray());
 var cfg = builder.Configuration;
 builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);
 builder.Services.AddLabTelemetry(cfg, "payments-api");
-if (args.Contains("--deploy-topology")) cfg["RabbitMq:DeployTopologyOnly"] = "true";
+cfg.ApplyDeployTopologyFlag(args);
 
 builder.Services.AddDbContext<PaymentsDb>(o => o.UseSqlServer(cfg.GetConnectionString("Db")));
 builder.Services.AddDbContextFactory<SimulatedGatewayDb>(o => o.UseSqlServer(cfg.GetConnectionString("Db")));
@@ -41,28 +41,13 @@ builder.Services.AddMassTransit(x =>
         o.DuplicateDetectionWindow = TimeSpan.FromMinutes(30);
     });
 
-    x.UsingRabbitMq((ctx, bus) =>
-    {
-        bus.Host(cfg["RabbitMq:Host"], cfg.GetValue<ushort>("RabbitMq:Port", 5672), cfg["RabbitMq:VirtualHost"] ?? "/", h =>
-        {
-            h.Username(cfg["RabbitMq:User"]!);
-            h.Password(cfg["RabbitMq:Password"]!);
-        });
-        bus.DeployTopologyOnly = cfg.GetValue<bool>("RabbitMq:DeployTopologyOnly");
-        bus.ConfigureEndpoints(ctx);
-    });
+    x.AddLabRabbitMq(cfg);
 });
 
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck<PaymentsDb>>("database");
 await using var app = builder.Build();
-if (cfg.GetValue<bool>("RabbitMq:DeployTopologyOnly"))
-{
-    await app.Services.GetRequiredService<IBusControl>().DeployAsync(app.Lifetime.ApplicationStopping);
-    if (args.Contains("--deploy-topology")) return;
-}
-await Database.InitializeAsync<PaymentsDb>(app.Services, app.Lifetime.ApplicationStopping,
-    (db, ct) => PaymentsDatabase.InitializeAsync(db, args.Contains("--adopt-legacy-database"), ct));
-if (args.Contains("--adopt-legacy-database")) return;
+if (await app.DeployTopologyIfRequestedAsync(args)) return;
+await Database.InitializeAsync<PaymentsDb>(app.Services, app.Lifetime.ApplicationStopping, PaymentsDatabase.InitializeAsync);
 
 app.MapGet("/health", () => Results.Ok("ok"));
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { ResultStatusCodes = { [HealthStatus.Degraded] = 503 } });

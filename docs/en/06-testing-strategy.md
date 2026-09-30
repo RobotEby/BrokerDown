@@ -3,7 +3,7 @@
 | Category | Scope |
 |---|---|
 | Unit | Polly retry/decline/timeout/cancellation/circuit, target TTL/abort/Production, worker safety/ACK/cooldown/kill switch |
-| Integration | SQL persistence, consumers with EF Inbox/Outbox, endpoints, broker delivery, duplicates/concurrency, legacy migration |
+| Integration | SQL persistence, consumers with EF Inbox/Outbox, endpoints, broker delivery, duplicates/concurrency |
 | Chaos | Real broker stop/start and real Payments latency/unavailability via RabbitMQ |
 
 Consumer harnesses use real SQL and the same business middleware as production, with an in-memory transport and a result probe. End-to-end tests use real RabbitMQ. Every test gets isolated database(s); broker tests also get a unique vhost. Collection fixtures share only container processes. Polling uses observable conditions and deadlines, not fixed settling sleeps.

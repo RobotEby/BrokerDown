@@ -20,7 +20,7 @@ public class PaymentProcessedConsumer(OrdersDb db, ILogger<PaymentProcessedConsu
         {
             OrdersTelemetry.Duration.Record((DateTimeOffset.UtcNow - createdAt!.Value).TotalSeconds,
                 new KeyValuePair<string, object?>("status", m.Success ? "paid" : "payment_failed"));
-            log.LogInformation("Pedido {OrderId} -> {Status} (gateway {Gateway})", m.OrderId, status, m.Gateway);
+            log.LogInformation("Order {OrderId} -> {Status} (gateway {Gateway})", m.OrderId, status, m.Gateway);
         }
     }
 }

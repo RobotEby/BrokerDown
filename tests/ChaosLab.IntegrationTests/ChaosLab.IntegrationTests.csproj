@@ -5,18 +5,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageReference Include="Shouldly" Version="4.3.0" />
-    <PackageReference Include="NSubstitute" Version="5.3.0" />
-    <PackageReference Include="Testcontainers.MsSql" Version="3.10.0" />
-    <PackageReference Include="Testcontainers.RabbitMq" Version="3.10.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.31" />
-    <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.10" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.1" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.1" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Testcontainers.MsSql" />
+    <PackageReference Include="Testcontainers.RabbitMq" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="MassTransit.RabbitMQ" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,13 +26,13 @@
       its own extern alias, confined to the Infrastructure folder; the tests
       themselves only see plain helpers and records.
     -->
-    <ProjectReference Include="..\..\src\Orders.Api\Orders.Api.csproj">
+    <ProjectReference Include="../../src/Orders.Api/Orders.Api.csproj">
       <Aliases>OrdersApi</Aliases>
     </ProjectReference>
-    <ProjectReference Include="..\..\src\Payments.Api\Payments.Api.csproj">
+    <ProjectReference Include="../../src/Payments.Api/Payments.Api.csproj">
       <Aliases>PaymentsApi</Aliases>
     </ProjectReference>
-    <ProjectReference Include="..\..\src\Shared.Contracts\Shared.Contracts.csproj" />
+    <ProjectReference Include="../../src/Shared.Contracts/Shared.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

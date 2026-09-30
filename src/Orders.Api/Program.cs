@@ -6,11 +6,11 @@ using Microsoft.EntityFrameworkCore;
 using Orders.Api;
 using Shared.Contracts;
 
-var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology" and not "--adopt-legacy-database").ToArray());
+var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology").ToArray());
 var cfg = builder.Configuration;
 builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);
 builder.Services.AddLabTelemetry(cfg, "orders-api");
-if (args.Contains("--deploy-topology")) cfg["RabbitMq:DeployTopologyOnly"] = "true";
+cfg.ApplyDeployTopologyFlag(args);
 
 builder.Services.AddDbContext<OrdersDb>(o => o.UseSqlServer(cfg.GetConnectionString("Db")));
 
@@ -27,25 +27,12 @@ builder.Services.AddMassTransit(x =>
         o.UseBusOutbox();
     });
 
-    x.UsingRabbitMq((ctx, bus) =>
-    {
-        bus.Host(cfg["RabbitMq:Host"], cfg.GetValue<ushort>("RabbitMq:Port", 5672), cfg["RabbitMq:VirtualHost"] ?? "/", h =>
-        {
-            h.Username(cfg["RabbitMq:User"]!);
-            h.Password(cfg["RabbitMq:Password"]!);
-        });
-        bus.DeployTopologyOnly = cfg.GetValue<bool>("RabbitMq:DeployTopologyOnly");
-        bus.ConfigureEndpoints(ctx);
-    });
+    x.AddLabRabbitMq(cfg);
 });
 
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck<OrdersDb>>("database");
 await using var app = builder.Build();
-if (cfg.GetValue<bool>("RabbitMq:DeployTopologyOnly"))
-{
-    await app.Services.GetRequiredService<IBusControl>().DeployAsync(app.Lifetime.ApplicationStopping);
-    if (args.Contains("--deploy-topology")) return;
-}
+if (await app.DeployTopologyIfRequestedAsync(args)) return;
 await Database.InitializeAsync<OrdersDb>(app.Services, app.Lifetime.ApplicationStopping);
 
 app.MapGet("/health", () => Results.Ok("ok"));
