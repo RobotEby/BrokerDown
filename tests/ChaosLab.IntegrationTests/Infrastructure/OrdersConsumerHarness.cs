@@ -1,5 +1,6 @@
 extern alias OrdersApi;
 
+using MassTransit;
 using MassTransit.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
