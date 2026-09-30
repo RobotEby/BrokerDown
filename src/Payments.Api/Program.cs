@@ -7,7 +7,7 @@ using Payments.Api;
 using Payments.Api.Gateways;
 using Payments.Api.Chaos;
 
-var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology" and not "--adopt-legacy-database").ToArray());
+var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology").ToArray());
 var cfg = builder.Configuration;
 builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);
 builder.Services.AddLabTelemetry(cfg, "payments-api");
@@ -60,9 +60,7 @@ if (cfg.GetValue<bool>("RabbitMq:DeployTopologyOnly"))
     await app.Services.GetRequiredService<IBusControl>().DeployAsync(app.Lifetime.ApplicationStopping);
     if (args.Contains("--deploy-topology")) return;
 }
-await Database.InitializeAsync<PaymentsDb>(app.Services, app.Lifetime.ApplicationStopping,
-    (db, ct) => PaymentsDatabase.InitializeAsync(db, args.Contains("--adopt-legacy-database"), ct));
-if (args.Contains("--adopt-legacy-database")) return;
+await Database.InitializeAsync<PaymentsDb>(app.Services, app.Lifetime.ApplicationStopping, PaymentsDatabase.InitializeAsync);
 
 app.MapGet("/health", () => Results.Ok("ok"));
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { ResultStatusCodes = { [HealthStatus.Degraded] = 503 } });

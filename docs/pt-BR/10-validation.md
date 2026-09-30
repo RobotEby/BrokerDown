@@ -29,7 +29,7 @@ A falha de cancelamento SQL foi mantida nos logs e reprocessada deliberadamente 
 - src/Orders.Api/Program.cs e PaymentProcessedConsumer.cs: validação, readiness, métricas e transição terminal atômica.
 - Definições dos consumidores e harnesses: Inbox/Outbox transacional e retries SQL limitados.
 - src/Payments.Api/Gateways/: registro independente e pipelines Polly.
-- src/Payments.Api/Migrations/ e PaymentsDatabase.cs: banco novo e adoção explícita do legado.
+- src/Payments.Api/Migrations/ e PaymentsDatabase.cs: banco novo.
 - src/Payments.Api/Chaos/, src/Chaos.Worker/ e Shared.Contracts/Chaos.cs: comandos, confirmação, TTL, controle e avaliação de segurança.
 - src/Shared.Infrastructure/: inicialização, saúde, métricas e diagnóstico de consumo.
 - docker-compose.yml, Dockerfile, infra/prometheus.yml e .env.example: ambiente executável com volumes persistentes.
@@ -67,7 +67,6 @@ dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter Fully
 dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter FullyQualifiedName~Order_BrokerUnavailable_StillAcceptedAndDeliveredOnceBrokerReturns
 docker compose config --quiet
 BUILD_NETWORK=host docker compose build
-docker compose run --rm --no-deps payments-api --adopt-legacy-database
 docker compose run --rm --no-deps payments-api --deploy-topology
 docker compose up -d --wait --wait-timeout 180
 python3 scripts/demo.py --scenario all --output artifacts/demo.json
@@ -83,13 +82,13 @@ O comando isolado RabbitMQ foi repetido três vezes. A última verificação de 
 | Queda RabbitMQ | 202/Pending → Paid, 16,53s após reinício |
 | Execução completa, incluindo aquecimento/recuperação | 162 pedidos/pagamentos/cobranças únicos; kill switch rejeita nova execução |
 
-Também foram verificados: migrations em banco novo, adoção legada explícita e rejeição de schema desconhecido; preservação de um pagamento no teste legado; backup real antes da adoção local; reinício de processos/SQL/broker preservando os 250 registros existentes naquele momento; RabbitMQ com volume novo saudável e cookie de rabbitmq; Payments tardio isolado em cerca de 4s, sem contar fixture. Prometheus retornou séries reais, sem IDs de negócio como labels.
+Também foram verificados: migrations em banco novo; reinício de processos/SQL/broker preservando os 250 registros existentes naquele momento; RabbitMQ com volume novo saudável e cookie de rabbitmq; Payments tardio isolado em cerca de 4s, sem contar fixture. Prometheus retornou séries reais, sem IDs de negócio como labels.
 
 As evidências locais ficam em artifacts/ (ignorado pelo Git): build.log, payments-unit.trx, chaos-unit.trx, verified_*.trx, rabbit-1/2/3.trx, late-payments.trx, test-summary.json, demo.json, demo-final.log, prometheus-evidence.json, restart-before/after.log, database-final.log e compose.log. A CI publica TRX/logs diagnósticos e evidências Compose. Não foi observada uma execução remota do GitHub Actions nesta sessão.
 
 ## 7. Executar novamente
 
-Siga o [README](../../README.pt-BR.md) para ambiente novo e o [procedimento legado](05-docker-environment.md#banco-payments-legado) para banco antigo. Preserve um .env existente. Esta máquina exigiu a opção documentada de rede do host no build. O demo termina com kill switch; reinicie payments-api e chaos-worker para limpar o bloqueio, respeitando o cooldown inicial. Nenhum experimento começa automaticamente.
+Siga o [README](../../README.pt-BR.md) para ambiente novo. Preserve um .env existente. Esta máquina exigiu a opção documentada de rede do host no build. O demo termina com kill switch; reinicie payments-api e chaos-worker para limpar o bloqueio, respeitando o cooldown inicial. Nenhum experimento começa automaticamente.
 
 ## 8. Pendências
 

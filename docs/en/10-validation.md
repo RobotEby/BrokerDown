@@ -29,7 +29,7 @@ The SQL-cancellation failure was retained in logs, deliberately replayed after t
 - src/Orders.Api/Program.cs and PaymentProcessedConsumer.cs: input validation, readiness, metrics, atomic terminal transition.
 - Business consumer definitions and integration harnesses: transactional inbox/outbox and bounded SQL retries.
 - src/Payments.Api/Gateways/: independent charge ledger and per-gateway Polly pipelines.
-- src/Payments.Api/Migrations/ and PaymentsDatabase.cs: fresh schema and explicit legacy adoption.
+- src/Payments.Api/Migrations/ and PaymentsDatabase.cs: fresh schema.
 - src/Payments.Api/Chaos/, src/Chaos.Worker/, Shared.Contracts/Chaos.cs: command/ACK/TTL/control and metric safety gate.
 - src/Shared.Infrastructure/: startup, health, metrics and message diagnostics.
 - docker-compose.yml, Dockerfile, infra/prometheus.yml, .env.example: runnable environment with persistent volumes.
@@ -67,7 +67,6 @@ dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter Fully
 dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter FullyQualifiedName~Order_BrokerUnavailable_StillAcceptedAndDeliveredOnceBrokerReturns
 docker compose config --quiet
 BUILD_NETWORK=host docker compose build
-docker compose run --rm --no-deps payments-api --adopt-legacy-database
 docker compose run --rm --no-deps payments-api --deploy-topology
 docker compose up -d --wait --wait-timeout 180
 python3 scripts/demo.py --scenario all --output artifacts/demo.json
@@ -83,13 +82,13 @@ The isolated broker command was repeated three times. The last Worker malformed-
 | RabbitMQ outage | 202/Pending then Paid, 16.53s after restart command |
 | Full run including warmup/recovery traffic | 162 unique orders/payments/charges; kill switch rejects further execution |
 
-Additional evidence: fresh SQL migrations, explicit legacy adoption and rejection of unknown schema; legacy test preserves an existing payment; real backup before local adoption; process/SQL/broker restart preserved all 250 rows present at that point; fresh RabbitMQ volume became healthy with rabbitmq-owned cookie; late Payments passed alone in approximately 4s excluding fixture startup. Prometheus queries returned real series without business IDs as labels.
+Additional evidence: fresh SQL migrations; process/SQL/broker restart preserved all 250 rows present at that point; fresh RabbitMQ volume became healthy with rabbitmq-owned cookie; late Payments passed alone in approximately 4s excluding fixture startup. Prometheus queries returned real series without business IDs as labels.
 
 Local evidence is in the ignored artifacts/ directory: build.log, payments-unit.trx, chaos-unit.trx, verified_*.trx, rabbit-1/2/3.trx, late-payments.trx, test-summary.json, demo.json, demo-final.log, prometheus-evidence.json, restart-before/after.log, database-final.log and compose.log. CI is configured to upload TRX/diagnostic logs and Compose evidence. A remote GitHub Actions run has not been observed in this session.
 
 ## 7. Run again
 
-Follow the [README](../../README.md) for a fresh environment and the [legacy procedure](05-docker-environment.md#legacy-payments-database) for an old database. Preserve an existing .env. This machine required the documented host-network build option. The demo ends with kill switch; restart payments-api and chaos-worker to reset it, then respect the startup cooldown. No experiment starts automatically.
+Follow the [README](../../README.md) for a fresh environment. Preserve an existing .env. This machine required the documented host-network build option. The demo ends with kill switch; restart payments-api and chaos-worker to reset it, then respect the startup cooldown. No experiment starts automatically.
 
 ## 8. Remaining scope
 

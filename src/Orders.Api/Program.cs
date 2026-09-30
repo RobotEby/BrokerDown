@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Orders.Api;
 using Shared.Contracts;
 
-var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology" and not "--adopt-legacy-database").ToArray());
+var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology").ToArray());
 var cfg = builder.Configuration;
 builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);
 builder.Services.AddLabTelemetry(cfg, "orders-api");

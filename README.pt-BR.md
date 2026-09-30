@@ -33,8 +33,6 @@ docker compose ps
 python3 scripts/demo.py --scenario all --output artifacts/demo.json
 ```
 
-**PaymentsDb anterior às migrations?** Siga o [procedimento de backup e adoção explícita](docs/pt-BR/05-docker-environment.md#banco-payments-legado) antes de iniciar Payments. Schemas desconhecidos são recusados, sem recriar dados.
-
 | Interface | Endereço |
 |---|---|
 | Orders | http://localhost:5001 |

@@ -14,22 +14,6 @@ Do not delete volumes to resolve a migration error. Existing credentials belong 
 
 SQL/RabbitMQ readiness precedes Payments. Payments readiness precedes Orders, ensuring the durable subscriber queue exists before publication. RabbitMQ probes run as rabbitmq, avoiding creation of a root-owned Erlang cookie. The hostname remains stable across restarts.
 
-## Legacy Payments database
-
-Fresh databases use EF migrations automatically. A database created by the old EnsureCreated version must be explicitly adopted. Stop writers, back up, then run the adoption command:
-
-```bash
-docker compose stop chaos-worker orders-api payments-api
-docker compose up -d --wait sqlserver rabbitmq
-docker compose exec -T sqlserver sh -c 'exec /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -b -Q "BACKUP DATABASE PaymentsDb TO DISK = '\''/var/opt/mssql/data/PaymentsDb-before-migrations.bak'\'' WITH COPY_ONLY, CHECKSUM"'
-docker compose run --rm --no-deps payments-api --adopt-legacy-database
-docker compose up -d --wait --wait-timeout 180
-```
-
-The backup stays in sqldata; also copy it outside the Docker volume when retaining it long term. Adoption checks expected columns/types/nullability and idempotency indexes, records the initial migration baseline, then adds SimulatedCharges. It preserves existing payments, but does not invent historical simulated charge rows. Unknown schema fails with a diagnostic. Repeated adoption/startup is safe. Inspect migrations rather than manually altering migration history.
-
-Orders retains EnsureCreated because its schema has not changed. Future schema changes there require a separate migration baseline.
-
 ## Separate topology deployment
 
 Before allowing the first publisher on a clean vhost:

@@ -33,8 +33,6 @@ docker compose ps
 python3 scripts/demo.py --scenario all --output artifacts/demo.json
 ```
 
-**Existing pre-migration PaymentsDb?** Follow the [backup and explicit adoption procedure](docs/en/05-docker-environment.md#legacy-payments-database) before starting Payments. Unknown schemas are refused, without recreating data.
-
 | Interface | Address |
 |---|---|
 | Orders | http://localhost:5001 |
