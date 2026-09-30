@@ -1,66 +1,54 @@
-# 05 · Ambiente Docker
+# Ambiente Docker
 
-Tudo roda localmente com Docker Compose. O único pré-requisito é o Docker.
-
-## Serviços
-
-| Serviço | Imagem | Portas | Observações |
-|---|---|---|---|
-| `rabbitmq` | `rabbitmq:3.13-management` | 5672 (AMQP), 15672 (UI) | Credenciais vindas do `.env` |
-| `sqlserver` | `mssql/server:2022-latest` | 1433 | Uma instância, dois bancos, dados no volume `sqldata` |
-| `orders-api` | construída a partir do `Dockerfile` | 5001 → 8080 | Usa o `OrdersDb` |
-| `payments-api` | construída a partir do `Dockerfile` | 5002 → 8080 | Usa o `PaymentsDb`, lê `Gateway__FailureRate` |
-
-## Ordem de inicialização
-
-```mermaid
-flowchart LR
-    R[rabbitmq saudável] --> O[orders-api]
-    S[sqlserver saudável] --> O
-    R --> P[payments-api]
-    S --> P
-```
-
-RabbitMQ e SQL Server definem healthchecks, e as duas APIs esperam por eles com `condition: service_healthy`. Além disso, cada API tenta criar o próprio banco na inicialização, com novas tentativas (até 15, com 3 segundos de intervalo), porque o SQL Server pode se declarar saudável um pouco antes de aceitar todo tipo de conexão.
-
-## Um Dockerfile para os dois serviços
-
-O `Dockerfile` é um build multi-stage parametrizado por `PROJECT`. O Compose passa `Orders.Api` ou `Payments.Api`, e o mesmo arquivo constrói qualquer um dos dois. A imagem final é a de runtime do ASP.NET, escutando na porta 8080.
-
-## Configuração
-
-As configurações chegam como variáveis de ambiente, com a convenção de sublinhado duplo do ASP.NET Core:
-
-| Variável | Finalidade |
-|---|---|
-| `ConnectionStrings__Db` | String de conexão do SQL Server do serviço |
-| `RabbitMq__Host`, `RabbitMq__User`, `RabbitMq__Password` | Conexão com o broker |
-| `Gateway__FailureRate` | Somente Payments. Probabilidade (0 a 1) de o gateway simulado recusar uma cobrança |
-
-O `.env` guarda `SA_PASSWORD`, `RABBIT_USER` e `RABBIT_PASS`. São credenciais de desenvolvimento e nunca devem ser reutilizadas em outro lugar.
-
-## Comandos do dia a dia
+Compose executa seis serviços, publica portas em localhost e mantém dados SQL, RabbitMQ e Prometheus em volumes nomeados. Imagens e SDK de build têm digest fixado. Aplicações usam net8.0; SDK 10 lê a solução .slnx.
 
 ```bash
-docker compose up -d --build     # sobe tudo
+cp .env.example .env  # somente na primeira execução
+docker compose config --quiet
+docker compose up -d --build --wait --wait-timeout 180
 docker compose logs -f payments-api
-docker compose stop rabbitmq     # simula uma queda do broker
-docker compose down              # para, mantém os dados
-docker compose down -v           # para e apaga os bancos
+docker compose down  # preserva volumes
 ```
 
-## Rodando as aplicações fora do Docker
+Não apague volumes para resolver migrations. Credenciais existentes pertencem ao banco/broker inicializado; editar .env não altera esses usuários.
 
-Suba apenas a infraestrutura e rode os serviços com o SDK do .NET. Os valores padrão do `appsettings.json` apontam para `localhost`.
+Readiness de SQL/RabbitMQ precede Payments; readiness de Payments precede Orders, garantindo fila consumidora antes da publicação. As sondas RabbitMQ rodam como rabbitmq para evitar cookie Erlang criado por root. O hostname fica estável após reinícios.
+
+## Banco Payments legado
+
+Bancos novos usam migrations automaticamente. Bancos criados pela versão com EnsureCreated exigem adoção explícita. Pare os escritores, faça backup e execute:
 
 ```bash
-docker compose up -d rabbitmq sqlserver
-dotnet run --project src/Orders.Api --urls http://localhost:5001
-dotnet run --project src/Payments.Api --urls http://localhost:5002
+docker compose stop chaos-worker orders-api payments-api
+docker compose up -d --wait sqlserver rabbitmq
+docker compose exec -T sqlserver sh -c 'exec /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -b -Q "BACKUP DATABASE PaymentsDb TO DISK = '\''/var/opt/mssql/data/PaymentsDb-before-migrations.bak'\'' WITH COPY_ONLY, CHECKSUM"'
+docker compose run --rm --no-deps payments-api --adopt-legacy-database
+docker compose up -d --wait --wait-timeout 180
 ```
 
-## Solução de problemas
+O backup fica em sqldata; copie-o também para fora do volume para retenção prolongada. A adoção verifica colunas/tipos/nulabilidade e índices de idempotência, registra a migration inicial e adiciona SimulatedCharges. Preserva pagamentos existentes, sem inventar cobranças históricas. Schema desconhecido gera diagnóstico. Repetir adoção/inicialização é seguro. Revise migrations em vez de editar o histórico manualmente.
 
-- **Um serviço fica reiniciando na primeira subida.** O SQL Server demora em um cold start. Dê um minuto e confira `docker compose logs sqlserver`.
-- **Porta já em uso.** Altere o lado esquerdo do mapeamento de portas no `docker-compose.yml`.
-- **Dados estranhos de uma execução anterior.** `docker compose down -v` devolve um ambiente limpo.
+Orders mantém EnsureCreated porque seu schema não mudou. Evolução desse schema exigirá baseline próprio.
+
+## Implantação separada da topologia
+
+Antes de liberar o primeiro publicador em um vhost limpo:
+
+```bash
+docker compose run --rm --no-deps payments-api --deploy-topology
+```
+
+O comando provisiona filas/bindings e termina sem consumir mensagens ou inicializar SQL. Compose já provisiona ao iniciar Payments primeiro.
+
+## Execução local e diagnóstico
+
+Para IDE, forneça ConnectionStrings__Db e RabbitMq__Password via user-secrets ou shell, e RabbitMq__Host/Port/VirtualHost conforme necessário. Telemetry__MetricsEndpoint recebe a URL HTTP OTLP completa. Nunca copie senhas para appsettings.
+
+Se a bridge Docker não alcançar NuGet/Debian, mas a rede do host funcionar (observado neste WSL), usuários Linux podem executar:
+
+```bash
+BUILD_NETWORK=host docker compose build
+docker compose up -d --wait --wait-timeout 180
+```
+
+Isso muda apenas a rede de build. O padrão continua sendo a rede normal do Docker. Diagnostique portas com docker compose ps e diferencie /health de /health/ready. O script de demonstração restaura o broker mesmo se uma asserção falhar.

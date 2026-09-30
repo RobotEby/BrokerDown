@@ -1,32 +1,17 @@
-# 07 · Fluxo de desenvolvimento
+# Desenvolvimento
 
-## O ciclo
+Mantenha net8.0, EF Core e MassTransit 8. Os projetos fixam versões exatas. SDK 10 é selecionado pelo global.json, imagem Docker e setup-dotnet 10.0.x na CI; testes locais também precisam do ASP.NET runtime net8.
 
-1. **Documentar o comportamento (RDD).** Descrevo o que a mudança deve fazer no README ou em `docs/` e adiciono seus cenários ao catálogo em [03 · Fluxo de mensagens](03-message-flow.md).
-2. **Escrever os testes (TDD).** Um teste falhando por cenário, na camada mais baixa capaz de expressá-lo.
-3. **Fazer passar.** A mudança mais simples que deixa o teste verde.
-4. **Refatorar.** Com os testes verdes, limpo o código sem alterar o comportamento.
-5. **Atualizar a documentação.** Nos dois idiomas, na mesma mudança.
+```bash
+dotnet tool restore
+dotnet restore ChaosLab.NET.slnx
+dotnet build ChaosLab.NET.slnx -c Release --no-restore
+dotnet test ChaosLab.NET.slnx -c Release --no-build
+docker compose config --quiet
+```
 
-Não escrevo código de produção para uma funcionalidade nova enquanto não existir um teste falhando para ela.
+Migrations pertencem a PaymentsDb, nunca SimulatedGatewayDb. Este usa transação independente sobre schema gerenciado por PaymentsDb. Use a factory de design com dotnet ef e revise o SQL; dados persistentes exigem backup e migração deliberada.
 
-## Regras de idioma
+Uma mudança pode ser revisada quando há verificação executável de sua falha, testes pertinentes passam, Compose continua saudável e documentação EN/PT corresponde ao código. IDs ficam em logs estruturados, nunca em labels. Não versione .env, artifacts ou segredos.
 
-- Tudo em `docs/` e os READMEs principais existem em **inglês e português do Brasil**. As duas versões têm o mesmo conteúdo e os mesmos nomes de arquivo. Atualizo as duas na mesma mudança, para que nunca se distanciem.
-- Comentários no código são escritos **somente em inglês**.
-- Mensagens de commit são escritas em inglês.
-
-## Política de comentários
-
-Mantenho os comentários no mínimo. Bons nomes e métodos pequenos devem deixar o código legível por si só. Um comentário só merece existir quando o *porquê* é difícil de enxergar no código: um fluxo intrincado de consumer, uma restrição sutil de ordem ou uma regra de negócio específica. Um comentário que repete o que a próxima linha faz é apagado.
-
-## Commits e pull requests
-
-Uso Conventional Commits: `docs:`, `test:`, `feat:`, `fix:`, `refactor:`, `chore:`.
-
-Uma pull request está pronta quando:
-
-- o comportamento está documentado nos dois idiomas;
-- os testes cobrem os cenários e passam;
-- o código segue a política de comentários;
-- `docker compose up -d --build` continua subindo o sistema inteiro.
+GitHub Actions executa todas as categorias e o demo completo. O demo verifica kill switch ao terminar; reinicie Payments e Worker para limpar esse bloqueio.
