@@ -6,6 +6,7 @@ using MassTransit.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using OrdersApi::Orders.Api;
+using OrdersApi::Orders.Api.Domain;
 
 namespace ChaosLab.IntegrationTests.Infrastructure;
 
