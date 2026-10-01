@@ -6,7 +6,7 @@ Núcleo implementado. Este documento não registra contagens de build ou de test
 
 O laboratório roda como seis serviços do Compose. O fluxo Prometheus → worker → RabbitMQ → falha → fallback → recuperação é exercitado por `scripts/demo.py` e pelos testes de integração.
 
-Ambiente: as aplicações usam net8.0. global.json aceita versões compatíveis do SDK 10.
+Ambiente: as aplicações usam net10.0. global.json aceita versões compatíveis do SDK 10.
 
 ## 2. Problemas encontrados e corrigidos
 
@@ -28,7 +28,7 @@ A falha de cancelamento SQL foi mantida nos logs e reprocessada deliberadamente 
 
 - src/Orders.Api/Program.cs e PaymentProcessedConsumer.cs: validação, readiness, métricas e transição terminal atômica.
 - Definições dos consumidores e harnesses: Inbox/Outbox transacional e retries SQL limitados.
-- src/Payments.Api/Gateways/: registro independente e pipelines Polly.
+- src/Payments.Api/Infrastructure/Gateways/: registro independente e pipelines Polly.
 - src/Payments.Api/Migrations/ e PaymentsDatabase.cs: banco novo.
 - src/Payments.Api/Chaos/, src/Chaos.Worker/ e Shared.Contracts/Chaos.cs: comandos, confirmação, TTL, controle e avaliação de segurança.
 - src/Shared.Infrastructure/: inicialização, saúde, métricas e diagnóstico de consumo.

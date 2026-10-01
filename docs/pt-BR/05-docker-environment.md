@@ -1,9 +1,10 @@
 # Ambiente Docker
 
-Compose executa seis serviços, publica portas em localhost e mantém dados SQL, RabbitMQ e Prometheus em volumes nomeados. Imagens e SDK de build têm digest fixado. Aplicações usam net8.0; SDK 10 lê a solução .slnx.
+Compose executa seis serviços, publica portas em localhost e mantém dados SQL, RabbitMQ e Prometheus em volumes nomeados. Imagens e SDK de build têm digest fixado. Aplicações usam net10.0; SDK 10 lê a solução .slnx.
 
 ```bash
 cp .env.example .env  # somente na primeira execução
+python3 -c 'import secrets; print("CHAOS_ADMIN_API_KEY=" + secrets.token_urlsafe(32))' >> .env
 docker compose config --quiet
 docker compose up -d --build --wait --wait-timeout 180
 docker compose logs -f payments-api
@@ -36,3 +37,5 @@ docker compose up -d --wait --wait-timeout 180
 ```
 
 Isso muda apenas a rede de build. O padrão continua sendo a rede normal do Docker. Diagnostique portas com docker compose ps e diferencie /health de /health/ready. O script de demonstração restaura o broker mesmo se uma asserção falhar.
+
+Gere a chave administrativa somente na primeira configuração. O Worker recebe `Chaos__AdminApiKey`; demais serviços não recebem essa chave. Para execução pela IDE, configure a mesma chave via user-secrets ou ambiente. A exportação de traces é opcional por `Telemetry__TracesEndpoint`, separada das métricas.

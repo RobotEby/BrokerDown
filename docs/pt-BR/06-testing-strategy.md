@@ -24,3 +24,9 @@ python3 scripts/demo.py --scenario all --output artifacts/demo.json
 ```
 
 A demonstração completa verifica Prometheus → worker → RabbitMQ → Payments → fallback → recuperação. Todas as categorias executam na CI, sem testes ignorados para deixar o build verde. A CI publica TRX e logs do Compose mesmo em falha. Veja [resultados medidos](10-validation.md).
+
+## Regressões da refatoração
+
+A suíte inclui autenticação real dos endpoints administrativos, ausência de efeitos em chamadas negadas, contratos JSON históricos, estados inválidos, cooldown e TTL com FakeTimeProvider, circuitos independentes e falha do fallback. Testes de persistência conservam migrations/dados anteriores e provocam deadlock SQL real (1205) após a cobrança, comprovando retry do consumidor com uma cobrança e um resultado. Resultados terminais concorrentes não sobrescrevem o vencedor.
+
+Também são verificadas correlação de traces e exportação OTLP real. A categoria Architecture verifica limites do domínio, contratos e referências de projetos sem dependência de um framework arquitetural adicional. O timeout de recuperação do broker permanece 120s.
