@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using MassTransit;
 using Microsoft.Extensions.Configuration;
@@ -8,13 +9,19 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using MassTransit.Logging;
 
 namespace Shared.Infrastructure;
 
 public static class Telemetry
 {
+    public static readonly ActivitySource Activities = new("ChaosLab");
+
     public static IServiceCollection AddLabTelemetry(this IServiceCollection services, IConfiguration config, string serviceName)
     {
+        services.Configure<LoggerFactoryOptions>(o => o.ActivityTrackingOptions =
+            ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId | ActivityTrackingOptions.ParentId);
         services.AddHealthChecks();
         services.AddHostedService<HealthTelemetry>();
         services.AddOpenTelemetry().ConfigureResource(r => r.AddService(serviceName, serviceInstanceId: Guid.NewGuid().ToString("N")))
@@ -31,6 +38,17 @@ public static class Telemetry
                         o.TimeoutMilliseconds = 3000;
                         reader.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = 5000;
                         reader.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative;
+                    });
+            })
+            .WithTracing(t =>
+            {
+                t.AddSource("Microsoft.AspNetCore", "System.Net.Http", DiagnosticHeaders.DefaultListenerName, Activities.Name);
+                if (Uri.TryCreate(config["Telemetry:TracesEndpoint"], UriKind.Absolute, out var endpoint))
+                    t.AddOtlpExporter(o =>
+                    {
+                        o.Endpoint = endpoint;
+                        o.Protocol = OtlpExportProtocol.HttpProtobuf;
+                        o.TimeoutMilliseconds = 3000;
                     });
             });
         return services;
@@ -69,12 +87,18 @@ public sealed class MessageFaultTelemetry(ILogger<MessageFaultTelemetry> logger)
 {
     private static readonly Meter Meter = new("ChaosLab.Messaging");
     private static readonly Counter<long> Errors = Meter.CreateCounter<long>("chaoslab.messaging.errors");
-    public Task PreConsume<T>(ConsumeContext<T> context) where T : class => Task.CompletedTask;
+    public Task PreConsume<T>(ConsumeContext<T> context) where T : class
+    {
+        Activity.Current?.SetTag("messaging.message.id", context.MessageId?.ToString())
+            .SetTag("messaging.message.correlation_id", context.CorrelationId?.ToString());
+        return Task.CompletedTask;
+    }
     public Task PostConsume<T>(ConsumeContext<T> context) where T : class => Task.CompletedTask;
     public Task ConsumeFault<T>(ConsumeContext<T> context, Exception exception) where T : class
     {
         Errors.Add(1, new KeyValuePair<string, object?>("message_type", typeof(T).Name));
-        logger.LogError(exception, "Message {MessageId} ({MessageType}) failed", context.MessageId, typeof(T).Name);
+        logger.LogError(exception, "Message {MessageId} ({MessageType}), correlation {CorrelationId} failed",
+            context.MessageId, typeof(T).Name, context.CorrelationId);
         return Task.CompletedTask;
     }
 }
