@@ -6,7 +6,7 @@ The core is implemented. This document does not record build or test counts; run
 
 The lab runs as six Compose services. The Prometheus → worker → RabbitMQ → injected fault → fallback → recovery flow is exercised by `scripts/demo.py` and by the integration tests.
 
-Environment: all applications target net8.0. SDK 10 feature bands are accepted by global.json.
+Environment: all applications target net10.0. SDK 10 feature bands are accepted by global.json.
 
 ## 2. Problems found and corrected
 
@@ -28,7 +28,7 @@ The SQL-cancellation failure was retained in logs, deliberately replayed after t
 
 - src/Orders.Api/Program.cs and PaymentProcessedConsumer.cs: input validation, readiness, metrics, atomic terminal transition.
 - Business consumer definitions and integration harnesses: transactional inbox/outbox and bounded SQL retries.
-- src/Payments.Api/Gateways/: independent charge ledger and per-gateway Polly pipelines.
+- src/Payments.Api/Infrastructure/Gateways/: independent charge ledger and per-gateway Polly pipelines.
 - src/Payments.Api/Migrations/ and PaymentsDatabase.cs: fresh schema.
 - src/Payments.Api/Chaos/, src/Chaos.Worker/, Shared.Contracts/Chaos.cs: command/ACK/TTL/control and metric safety gate.
 - src/Shared.Infrastructure/: startup, health, metrics and message diagnostics.

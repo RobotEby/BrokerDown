@@ -30,3 +30,11 @@ time() - chaoslab_service_heartbeat
 The worker requires fresh ready signals for Orders and Payments. It checks a one-minute histogram/count window, at least ten completed orders to start, failure ratio ≤5%, p95 ≤10s. Missing, stale or invalid telemetry fails closed. Gateway failure/fallback counters are diagnostic and do not themselves count as failed orders. Consumer faults conservatively contribute to the error guard.
 
 After a restart, allow fresh exports and a traffic window before expecting a safe assessment. Prometheus increase/rate extrapolate sampled data; metrics are not financial accounting. SQL constraints and the durable ledger provide the charge guarantee.
+
+## Distributed tracing
+
+Telemetry registers native Microsoft.AspNetCore, System.Net.Http and MassTransit sources plus ChaosLab. Business spans cover payments.charge, payments.reconcile, payments.fallback, chaos.request, chaos.dispatch and chaos.abort. W3C context crosses the Outbox and RabbitMQ; OrderId/ExperimentId become CorrelationId and tags, never metric labels. JSON logs include TraceId/SpanId and relevant message/business identifiers.
+
+Set `Telemetry__TracesEndpoint=http://YOUR_BACKEND:4318/v1/traces` in each exporting service. The endpoint receives OTLP/HTTP protobuf with a 3s timeout. Without this setting, the lab runs without a trace exporter. The metrics endpoint remains independent. For Compose, set `TELEMETRY_TRACES_ENDPOINT` in `.env`; containers must be able to reach the backend.
+
+Tests verify HTTP → Outbox → RabbitMQ → Payments → Orders, including broker recovery, chaos dispatch after the HTTP response, and a real OTLP POST to a temporary test receiver. Metrics remain cumulative with unchanged names and buckets.
