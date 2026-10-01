@@ -1,25 +1,20 @@
+using Payments.Api.Application;
+using Payments.Api.Domain;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Shared.Contracts;
 
-namespace Payments.Api.Gateways;
+namespace Payments.Api.Infrastructure.Gateways;
 
-public sealed class SimulatedCharge
+public static class SimulatedChargeMapping
 {
-    public Guid OrderId { get; set; }
-    public decimal Amount { get; set; }
-    public bool Success { get; set; }
-    public string Gateway { get; set; } = "";
-    public string? FailureReason { get; set; }
-    public DateTimeOffset CompletedAt { get; set; }
-
     public static void Configure(EntityTypeBuilder<SimulatedCharge> entity)
     {
         entity.ToTable("SimulatedCharges");
         entity.HasKey(x => x.OrderId);
         entity.Property(x => x.Amount).HasPrecision(18, 2);
-        entity.Property(x => x.Gateway).HasMaxLength(50);
+        entity.Property(x => x.Gateway).HasConversion(g => g.ToWireName(), s => PaymentGatewayNames.Parse(s)).HasMaxLength(50);
     }
 }
 
@@ -28,14 +23,14 @@ public sealed class SimulatedCharge
 public sealed class SimulatedGatewayDb(DbContextOptions<SimulatedGatewayDb> options) : DbContext(options)
 {
     public DbSet<SimulatedCharge> Charges => Set<SimulatedCharge>();
-    protected override void OnModelCreating(ModelBuilder builder) => builder.Entity<SimulatedCharge>(SimulatedCharge.Configure);
+    protected override void OnModelCreating(ModelBuilder builder) => builder.Entity<SimulatedCharge>(SimulatedChargeMapping.Configure);
 }
 
 public sealed class ChargeLedger(IDbContextFactory<SimulatedGatewayDb> factory)
 {
     public async Task<ChargeResult?> FindAsync(ChargeRequest request, CancellationToken ct)
     {
-        Validate(request);
+        request.Validate();
         await using var db = await factory.CreateDbContextAsync(ct);
         var charge = await db.Charges.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == request.OrderId, ct);
         if (charge is null) return null;
@@ -46,7 +41,7 @@ public sealed class ChargeLedger(IDbContextFactory<SimulatedGatewayDb> factory)
 
     public async Task<ChargeResult> RecordAsync(ChargeRequest request, ChargeResult result, CancellationToken ct)
     {
-        Validate(request);
+        request.Validate();
         await using var db = await factory.CreateDbContextAsync(ct);
         db.Charges.Add(new SimulatedCharge
         {
@@ -65,9 +60,4 @@ public sealed class ChargeLedger(IDbContextFactory<SimulatedGatewayDb> factory)
         }
     }
 
-    public static void Validate(ChargeRequest request)
-    {
-        if (request.OrderId == Guid.Empty || !Money.IsValid(request.Amount))
-            throw new ArgumentException("Charge requires an order id and a valid monetary amount");
-    }
 }

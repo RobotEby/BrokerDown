@@ -1,7 +1,8 @@
 using System.Collections.Concurrent;
 using Shared.Contracts;
 using Shared.Infrastructure;
-using Payments.Api.Gateways;
+using Payments.Api.Infrastructure.Gateways;
+using Payments.Api.Application;
 
 namespace Payments.Api.Chaos;
 
@@ -37,20 +38,20 @@ public sealed class ChaosState : IDisposable
             var now = _clock.GetUtcNow();
             foreach (var id in _finished.Where(x => x.Value < now).Select(x => x.Key).ToArray()) _finished.Remove(id);
             if (_active?.ExperimentId == command.ExperimentId)
-                return new(command.ExperimentId, "started", now, "Already active; TTL unchanged");
+                return new(command.ExperimentId, ChaosExperimentStatus.Started, now, "Already active; TTL unchanged");
             string? reason = !_enabled || _killed ? "Chaos disabled" :
                 command.ExperimentId == Guid.Empty || !Enum.IsDefined(command.Fault) ? "Invalid experiment" :
                 command.ExpiresAt <= now || command.ExpiresAt > now.AddSeconds(60) ? "Expired or excessive TTL" :
                 command.LatencyMilliseconds is < 1 or > 5000 ? "Invalid latency" :
                 _finished.ContainsKey(command.ExperimentId) ? "Experiment already ended" :
                 _active is not null ? "Another experiment is active" : null;
-            if (reason is not null) return new(command.ExperimentId, "rejected", now, reason);
+            if (reason is not null) return new(command.ExperimentId, ChaosExperimentStatus.Rejected, now, reason);
             _active = command;
             _started = now;
             _delayCancellation = new CancellationTokenSource(command.ExpiresAt - now, _clock);
             _logger.LogWarning("Chaos {ExperimentId} started: {Fault}, expires {ExpiresAt}", command.ExperimentId, command.Fault, command.ExpiresAt);
             ChaosTelemetry.Experiments.Add(1, new("fault", command.Fault.ToString()), new("event", "started"));
-            return new(command.ExperimentId, "started", now);
+            return new(command.ExperimentId, ChaosExperimentStatus.Started, now);
         }
     }
 
@@ -61,8 +62,8 @@ public sealed class ChaosState : IDisposable
             if (command.KillSwitch) _killed = true;
             if (command.ExperimentId is { } id) _finished[id] = _clock.GetUtcNow().AddSeconds(60);
             if (_active is { } active && (command.ExperimentId is null || command.ExperimentId == active.ExperimentId))
-                return Finish("aborted", command.KillSwitch ? "Kill switch" : "Abort requested");
-            return command.ExperimentId is { } requested ? new(requested, "aborted", _clock.GetUtcNow(), "No active effect") : null;
+                return Finish(ChaosExperimentStatus.Aborted, command.KillSwitch ? "Kill switch" : "Abort requested");
+            return command.ExperimentId is { } requested ? new(requested, ChaosExperimentStatus.Aborted, _clock.GetUtcNow(), "No active effect") : null;
         }
     }
 
@@ -93,10 +94,10 @@ public sealed class ChaosState : IDisposable
     private void Expire()
     {
         if (_active is { } active && (active.ExpiresAt <= _clock.GetUtcNow() || _delayCancellation?.IsCancellationRequested == true))
-            _events.Enqueue(Finish("expired", "TTL elapsed"));
+            _events.Enqueue(Finish(ChaosExperimentStatus.Expired, "TTL elapsed"));
     }
 
-    private ChaosExperimentChanged Finish(string status, string reason)
+    private ChaosExperimentChanged Finish(ChaosExperimentStatus status, string reason)
     {
         var active = _active!;
         _active = null;
@@ -104,9 +105,9 @@ public sealed class ChaosState : IDisposable
         _delayCancellation?.Dispose();
         _delayCancellation = null;
         _finished[active.ExperimentId] = _clock.GetUtcNow().AddSeconds(60);
-        ChaosTelemetry.Experiments.Add(1, new("fault", active.Fault.ToString()), new("event", status));
+        ChaosTelemetry.Experiments.Add(1, new("fault", active.Fault.ToString()), new("event", status.ToString().ToLowerInvariant()));
         ChaosTelemetry.Duration.Record(Math.Max(0, (_clock.GetUtcNow() - _started).TotalSeconds),
-            new("fault", active.Fault.ToString()), new("outcome", status));
+            new("fault", active.Fault.ToString()), new("outcome", status.ToString().ToLowerInvariant()));
         _logger.LogInformation("Chaos {ExperimentId} {Status}: {Reason}", active.ExperimentId, status, reason);
         return new(active.ExperimentId, status, _clock.GetUtcNow(), reason);
     }

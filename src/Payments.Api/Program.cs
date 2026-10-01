@@ -1,10 +1,12 @@
+using Payments.Api.Domain;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MassTransit;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Shared.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Payments.Api;
-using Payments.Api.Gateways;
+using Payments.Api.Infrastructure.Gateways;
+using Payments.Api.Application;
 using Payments.Api.Chaos;
 
 var builder = WebApplication.CreateBuilder(args.Where(a => a is not "--deploy-topology").ToArray());

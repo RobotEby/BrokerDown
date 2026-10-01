@@ -1,10 +1,15 @@
+using Shared.Contracts;
+using Shared.Infrastructure;
+using System.Diagnostics;
+using Payments.Api.Application;
+using Payments.Api.Domain;
 using System.Diagnostics.Metrics;
 using Polly;
 using Polly.CircuitBreaker;
 using Polly.Retry;
 using Polly.Timeout;
 
-namespace Payments.Api.Gateways;
+namespace Payments.Api.Infrastructure.Gateways;
 
 public sealed class ResilienceOptions
 {
@@ -44,8 +49,31 @@ public sealed class ResilientPaymentGateway : IPaymentGateway
 
     public async Task<ChargeResult> ChargeAsync(ChargeRequest req, CancellationToken ct)
     {
+        using var activity = Telemetry.Activities.StartActivity("payments.charge");
+        activity?.SetTag("order.id", req.OrderId.ToString());
+        using var scope = _logger.BeginScope(new Dictionary<string, object?> { ["OrderId"] = req.OrderId });
+        try
+        {
+            var result = await ChargeCoreAsync(req, ct);
+            activity?.SetTag("payment.gateway", result.Gateway.ToWireName()).SetTag("payment.approved", result.Success);
+            return result;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            activity?.SetTag("payment.cancelled", true);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
+            throw;
+        }
+    }
+
+    private async Task<ChargeResult> ChargeCoreAsync(ChargeRequest req, CancellationToken ct)
+    {
         ct.ThrowIfCancellationRequested();
-        ChargeLedger.Validate(req);
+        req.Validate();
         try
         {
             return await _primaryPipeline.ExecuteAsync(token => new ValueTask<ChargeResult>(_primary.ChargeAsync(req, token)), ct);
@@ -54,9 +82,16 @@ public sealed class ResilientPaymentGateway : IPaymentGateway
         {
             ct.ThrowIfCancellationRequested();
             // Reconcile an ambiguous timeout before trying a second gateway with the same key.
-            if (await _findCharge(req, ct) is { } completed) return completed;
+            using (var reconciliation = Telemetry.Activities.StartActivity("payments.reconcile"))
+            {
+                var completed = await _findCharge(req, ct);
+                reconciliation?.SetTag("payment.reconciled", completed is not null);
+                if (completed is not null) return completed;
+            }
             Event("primary", "fallback");
             _logger.LogWarning(ex, "Fallback for order {OrderId}", req.OrderId);
+            using var fallback = Telemetry.Activities.StartActivity("payments.fallback");
+            fallback?.SetTag("payment.gateway", "fallback");
             return await _fallbackPipeline.ExecuteAsync(token => new ValueTask<ChargeResult>(_fallback.ChargeAsync(req, token)), ct);
         }
     }
@@ -90,6 +125,7 @@ public sealed class ResilientPaymentGateway : IPaymentGateway
 
     private void Event(string gateway, string name)
     {
+        Activity.Current?.AddEvent(new ActivityEvent(name, tags: new ActivityTagsCollection { { "payment.gateway", gateway } }));
         PaymentTelemetry.Resilience.Add(1, new("gateway", gateway), new("event", name));
         _logger.LogInformation("Gateway {Gateway} resilience event {Event}", gateway, name);
     }
