@@ -1,3 +1,4 @@
+using Orders.Api.Domain;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MassTransit;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -53,7 +54,9 @@ app.MapPost("/orders", async (CreateOrderRequest req, OrdersDb db, IPublishEndpo
     };
 
     db.Orders.Add(order);
-    await bus.Publish(new OrderCreated(order.Id, order.CustomerId, order.Amount, order.CreatedAt), ct);
+    System.Diagnostics.Activity.Current?.SetTag("order.id", order.Id.ToString());
+    await bus.Publish(new OrderCreated(order.Id, order.CustomerId, order.Amount, order.CreatedAt),
+        context => context.CorrelationId = order.Id, ct);
     await db.SaveChangesAsync(ct);
     OrdersTelemetry.Accepted.Add(1);
 
