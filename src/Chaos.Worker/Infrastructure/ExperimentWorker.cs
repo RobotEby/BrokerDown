@@ -1,5 +1,6 @@
 using MassTransit;
 using Shared.Contracts;
+using Shared.Infrastructure;
 
 namespace Chaos.Worker.Infrastructure;
 
@@ -7,6 +8,7 @@ public sealed class ExperimentChangedConsumer(ChaosCoordinator coordinator) : IC
 {
     public Task Consume(ConsumeContext<ChaosExperimentChanged> context)
     {
+        Telemetry.EnrichMessageActivity(context);
         coordinator.Observe(context.Message);
         return Task.CompletedTask;
     }
