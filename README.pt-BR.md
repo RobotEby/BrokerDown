@@ -24,10 +24,12 @@ Os gateways ficam dentro de Payments e compartilham um registro durável, confir
 
 ## Executar
 
-Requer Docker Compose com containers Linux (SQL Server: x86-64). A demonstração usa Python 3. Para build/testes locais, instale um SDK .NET 10 estável e o ASP.NET runtime .NET 8; `global.json` aceita versões compatíveis do SDK 10 para `.slnx`.
+Requer Docker Compose com containers Linux (SQL Server: x86-64). A demonstração usa Python 3. Para build/testes locais, instale o SDK .NET 10 (10.0.112 ou uma feature band compatível mais recente) e o runtime ASP.NET Core 10. O SDK Docker fixado é 10.0.401; `global.json` permite esse roll-forward.
 
 ```bash
 cp .env.example .env  # primeira execução; preserve um .env existente
+# Gere uma chave uma vez; preserve a chave existente.
+python3 -c 'import secrets; print("CHAOS_ADMIN_API_KEY=" + secrets.token_urlsafe(32))' >> .env
 docker compose up -d --build --wait --wait-timeout 180
 docker compose ps
 python3 scripts/demo.py --scenario all --output artifacts/demo.json
@@ -62,12 +64,15 @@ O cenário `all` termina verificando o kill switch. Para outro experimento, rein
 Controle manual (gere dez pedidos concluídos recentemente):
 
 ```bash
-curl http://localhost:5003/chaos
-curl -i http://localhost:5003/chaos/experiments -H 'Content-Type: application/json' \
+export CHAOS_ADMIN_API_KEY="$(python3 -c 'from scripts.demo import admin_key; print(admin_key())')"
+curl http://localhost:5003/chaos -H "X-Chaos-Api-Key: $CHAOS_ADMIN_API_KEY"
+curl -i http://localhost:5003/chaos/experiments -H "X-Chaos-Api-Key: $CHAOS_ADMIN_API_KEY" -H 'Content-Type: application/json' \
   -d '{"fault":"Latency","durationSeconds":30,"latencyMilliseconds":2000}'
-curl -X POST http://localhost:5003/chaos/abort
-curl -X POST http://localhost:5003/chaos/kill-switch
+curl -X POST http://localhost:5003/chaos/abort -H "X-Chaos-Api-Key: $CHAOS_ADMIN_API_KEY"
+curl -X POST http://localhost:5003/chaos/kill-switch -H "X-Chaos-Api-Key: $CHAOS_ADMIN_API_KEY"
 ```
+
+Todas as rotas `/chaos` exigem `X-Chaos-Api-Key`. O Worker recusa inicializar sem `Chaos:AdminApiKey` com pelo menos 32 caracteres. O demo lê `CHAOS_ADMIN_API_KEY` do ambiente ou `.env`; a CI gera sua própria chave efêmera. Health checks continuam anônimos. Rotacione a chave alterando a configuração e recriando o Worker. As portas do laboratório permanecem em localhost; acesso remoto exige um canal HTTPS protegido.
 
 Cada solicitação produz no máximo um experimento. A cada 5s o worker verifica serviços saudáveis, dados com até 15s, dez pedidos concluídos/minuto, falhas finais ≤5% e p95 ponta a ponta ≤10s. Aguarda até 60s por condições seguras. A ativação exige confirmação de Payments em até 10s. Perda de segurança solicita aborto. Defaults: duração 30s (máximo 60s), latência 2s (máximo 5s), cooldown 60s, inclusive após reinício. Caos fica desabilitado por padrão e bloqueado em Production. Compose habilita Development sem iniciar experimentos.
 
@@ -97,4 +102,6 @@ Os testes de integração iniciam seus próprios containers e isolam banco e vho
 
 As métricas seguem diretamente do exporter estável OpenTelemetry OTLP/HTTP ao Prometheus, sem Collector. Consulte [PromQL](docs/pt-BR/09-observability.md), [validação medida](docs/pt-BR/10-validation.md) e o [índice](docs/README.md).
 
-Stack: net8.0, EF Core 9.0.1, MassTransit 8.5.10, Polly 8.6.1, OpenTelemetry 1.18.0, SQL Server 2022, RabbitMQ 3.13 e Prometheus 3.5.0. Digests e versões dos pacotes estão fixados. Grafana, backend de traces, YARP, Keycloak, Catalog, Redis e gRPC seguem como [evoluções futuras](docs/pt-BR/08-roadmap.md).
+Stack: net10.0, EF Core 10.0.12, MassTransit 8.5.10, Polly 8.6.1, OpenTelemetry 1.18.0, SQL Server 2022, RabbitMQ 3.13 e Prometheus 3.5.0. Digests e versões dos pacotes estão fixados. Grafana, backend de traces, YARP, Keycloak, Catalog, Redis e gRPC seguem como [evoluções futuras](docs/pt-BR/08-roadmap.md).
+
+Tracing W3C cobre HTTP, MassTransit, cobrança, reconciliação e comandos de caos. Configure `Telemetry__TracesEndpoint` com a URL OTLP/HTTP completa, incluindo `/v1/traces`; não há backend adicional obrigatório. Veja [observabilidade](docs/pt-BR/09-observability.md).

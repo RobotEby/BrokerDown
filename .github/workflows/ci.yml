@@ -19,13 +19,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
-          dotnet-version: |
-            10.0.x
-            8.0.x
+          dotnet-version: 10.0.112
           cache: true
           cache-dependency-path: Directory.Packages.props
       - run: dotnet restore ChaosLab.NET.slnx
+      - run: dotnet tool restore
       - run: dotnet build ChaosLab.NET.slnx --no-restore -c Release
+      - run: dotnet ef migrations has-pending-model-changes --project src/Payments.Api --context PaymentsDb --no-build --configuration Release
       - run: dotnet test tests/Payments.UnitTests --no-build -c Release --logger "trx;LogFileName=payments-unit.trx" --results-directory artifacts --diag artifacts/payments-unit.log
       - run: dotnet test tests/Chaos.UnitTests --no-build -c Release --logger "trx;LogFileName=chaos-unit.trx" --results-directory artifacts --diag artifacts/chaos-unit.log
       - run: dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter 'Category!=Chaos' --logger "trx;LogFileName=integration.trx" --results-directory artifacts --diag artifacts/integration.log
@@ -42,7 +42,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: cp .env.example .env
+      - run: |
+          cp .env.example .env
+          python3 -c 'import secrets; print("CHAOS_ADMIN_API_KEY=" + secrets.token_urlsafe(32))' >> .env
       - run: docker compose up -d --build --wait --wait-timeout 180
       - run: python3 scripts/demo.py --scenario all --output artifacts/demo.json
       - if: always()

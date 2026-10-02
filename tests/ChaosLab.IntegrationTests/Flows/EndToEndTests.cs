@@ -1,19 +1,23 @@
 extern alias OrdersApi;
 extern alias PaymentsApi;
 
+using Shared.Contracts;
 using System.Net.Http.Json;
 using System.Net;
 using System.Diagnostics;
 using MassTransit;
 using MassTransit.EntityFrameworkCoreIntegration;
 using PaymentsApi::Payments.Api;
+using PaymentsApi::Payments.Api.Domain;
 using Xunit.Abstractions;
 using ChaosLab.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using OrdersApi::Orders.Api;
-using PaymentsApi::Payments.Api.Gateways;
+using OrdersApi::Orders.Api.Domain;
+using PaymentsApi::Payments.Api.Infrastructure.Gateways;
+using PaymentsApi::Payments.Api.Application;
 using Shouldly;
 using Xunit;
 
@@ -80,18 +84,22 @@ public class EndToEndTests : IAsyncLifetime
     {
         var gateway = Substitute.For<IPaymentGateway>();
         gateway.ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ChargeResult(true, "primary", null));
+            .Returns(new ChargeResult(true, PaymentGateway.Primary, null));
 
         await using var payments = StartPayments(gateway);
         using var paymentsClient = payments.CreateClient();
         await paymentsClient.WaitUntilReadyAsync();
 
+        using var traces = new TraceCapture();
+        var traceId = ActivityTraceId.CreateRandom();
+        _ordersClient.DefaultRequestHeaders.Add("traceparent", $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01");
         var orderId = await CreateOrderAsync();
 
         await Eventually.Until(async () => await ReadStatusAsync(orderId) != OrderStatus.Pending,
             timeout: TimeSpan.FromSeconds(60), diagnostic: () => $"Order {orderId}: {_lastStatus}");
 
         (await ReadStatusAsync(orderId)).ShouldBe(OrderStatus.Paid);
+        await AssertOrderTrace(traces, orderId, traceId);
     }
 
     [Fact]
@@ -100,7 +108,7 @@ public class EndToEndTests : IAsyncLifetime
     {
         var gateway = Substitute.For<IPaymentGateway>();
         gateway.ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ChargeResult(false, "primary", "Card declined"));
+            .Returns(new ChargeResult(false, PaymentGateway.Primary, "Card declined"));
 
         await using var payments = StartPayments(gateway);
         using var paymentsClient = payments.CreateClient();
@@ -132,7 +140,7 @@ public class EndToEndTests : IAsyncLifetime
 
         var gateway = Substitute.For<IPaymentGateway>();
         gateway.ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ChargeResult(true, "primary", null));
+            .Returns(new ChargeResult(true, PaymentGateway.Primary, null));
 
         await using var payments = StartPayments(gateway);
         using var paymentsClient = payments.CreateClient();
@@ -152,6 +160,9 @@ public class EndToEndTests : IAsyncLifetime
         await paymentsClient.WaitUntilReadyAsync();
         var port = _infra.Rabbit.GetMappedPublicPort(5672);
         var total = Stopwatch.StartNew();
+        using var traces = new TraceCapture();
+        var traceId = ActivityTraceId.CreateRandom();
+        _ordersClient.DefaultRequestHeaders.Add("traceparent", $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01");
         await _infra.Rabbit.StopAsync();
         Guid orderId;
         try
@@ -183,7 +194,20 @@ public class EndToEndTests : IAsyncLifetime
             using var scope = _orders.Services.CreateScope();
             return !await scope.ServiceProvider.GetRequiredService<OrdersDb>().Set<OutboxMessage>().AnyAsync();
         }, description: "Orders outbox delivered");
+        await AssertOrderTrace(traces, orderId, traceId);
         _output.WriteLine($"Broker port {port}; ready-to-Paid {recovery.Elapsed}; entire outage/recovery {total.Elapsed}");
+    }
+
+    private static async Task AssertOrderTrace(TraceCapture capture, Guid orderId, ActivityTraceId traceId)
+    {
+        await Eventually.Until(() => Task.FromResult(capture.Completed.Count(a =>
+            a.Kind == ActivityKind.Consumer && (string?)a.GetTagItem("order.id") == orderId.ToString()) >= 2),
+            description: "both consumers complete correlated spans");
+        var spans = capture.Completed.Where(a => (string?)a.GetTagItem("order.id") == orderId.ToString()).ToArray();
+        spans.ShouldNotBeEmpty();
+        foreach (var span in spans) span.TraceId.ShouldBe(traceId);
+        foreach (var consumer in spans.Where(a => a.Kind == ActivityKind.Consumer))
+            consumer.GetTagItem("messaging.message.correlation_id").ShouldBe(orderId.ToString());
     }
 
     private sealed record OrderAccepted(Guid Id, string Status);

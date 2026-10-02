@@ -4,6 +4,7 @@ x-bus: &bus
   RabbitMq__Host: rabbitmq
   RabbitMq__User: ${RABBIT_USER:?Copy .env.example to .env and configure RABBIT_USER}
   RabbitMq__Password: ${RABBIT_PASS:?Configure RABBIT_PASS in .env}
+  Telemetry__TracesEndpoint: ${TELEMETRY_TRACES_ENDPOINT:-}
   Telemetry__MetricsEndpoint: http://prometheus:9090/api/v1/otlp/v1/metrics
   ASPNETCORE_ENVIRONMENT: Development
 
@@ -79,6 +80,7 @@ services:
       <<: *bus
       Chaos__Enabled: "true"
       Prometheus__Url: http://prometheus:9090
+      Chaos__AdminApiKey: ${CHAOS_ADMIN_API_KEY:?Generate CHAOS_ADMIN_API_KEY in .env (at least 32 characters)}
     ports: ["127.0.0.1:5003:8080"]
 
 volumes:

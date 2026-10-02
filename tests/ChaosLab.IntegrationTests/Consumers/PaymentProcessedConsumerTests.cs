@@ -5,6 +5,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using OrdersApi::Orders.Api;
+using OrdersApi::Orders.Api.Domain;
 using Shared.Contracts;
 using Shouldly;
 using Xunit;
@@ -52,12 +53,31 @@ public class PaymentProcessedConsumerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConcurrentTerminalResultsAndRedeliveryCannotOverwriteTheWinner()
+    {
+        var order = await SeedOrderAsync(OrderStatus.Pending);
+        var approved = new PaymentProcessed(order.Id, true, PaymentGateway.Primary, null, DateTimeOffset.UtcNow);
+        var declined = approved with { Success = false, FailureReason = "declined" };
+        await Task.WhenAll(_harness.Harness.Bus.Publish(approved), _harness.Harness.Bus.Publish(declined));
+        await Eventually.Until(async () => (await ReloadAsync(order.Id)).Status != OrderStatus.Pending);
+        await _harness.Harness.InactivityTask;
+        var winner = await ReloadAsync(order.Id);
+        await Task.WhenAll(_harness.Harness.Bus.Publish(approved), _harness.Harness.Bus.Publish(declined));
+        await _harness.Harness.InactivityTask;
+        var final = await ReloadAsync(order.Id);
+        final.Status.ShouldBe(winner.Status);
+        final.FailureReason.ShouldBe(winner.FailureReason);
+        if (final.Status == OrderStatus.Paid) final.FailureReason.ShouldBeNull();
+        else final.FailureReason.ShouldBe("declined");
+    }
+
+    [Fact]
     [Trait("Scenario", "ORD-05")]
     public async Task Consume_SuccessfulPayment_OrderBecomesPaid()
     {
         var order = await SeedOrderAsync(OrderStatus.Pending);
 
-        await _harness.Harness.Bus.Publish(new PaymentProcessed(order.Id, true, "primary", null, DateTimeOffset.UtcNow));
+        await _harness.Harness.Bus.Publish(new PaymentProcessed(order.Id, true, PaymentGateway.Primary, null, DateTimeOffset.UtcNow));
 
         (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == order.Id))
             .ShouldBeTrue();
@@ -73,7 +93,7 @@ public class PaymentProcessedConsumerTests : IAsyncLifetime
         var order = await SeedOrderAsync(OrderStatus.Pending);
 
         await _harness.Harness.Bus.Publish(
-            new PaymentProcessed(order.Id, false, "primary", "Card declined", DateTimeOffset.UtcNow));
+            new PaymentProcessed(order.Id, false, PaymentGateway.Primary, "Card declined", DateTimeOffset.UtcNow));
 
         (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == order.Id))
             .ShouldBeTrue();
@@ -91,7 +111,7 @@ public class PaymentProcessedConsumerTests : IAsyncLifetime
         var order = await SeedOrderAsync(OrderStatus.Paid);
 
         await _harness.Harness.Bus.Publish(
-            new PaymentProcessed(order.Id, false, "primary", "Late duplicate", DateTimeOffset.UtcNow));
+            new PaymentProcessed(order.Id, false, PaymentGateway.Primary, "Late duplicate", DateTimeOffset.UtcNow));
 
         (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == order.Id))
             .ShouldBeTrue();
@@ -108,7 +128,7 @@ public class PaymentProcessedConsumerTests : IAsyncLifetime
     {
         var unknownId = Guid.NewGuid();
 
-        await _harness.Harness.Bus.Publish(new PaymentProcessed(unknownId, true, "primary", null, DateTimeOffset.UtcNow));
+        await _harness.Harness.Bus.Publish(new PaymentProcessed(unknownId, true, PaymentGateway.Primary, null, DateTimeOffset.UtcNow));
 
         (await _harness.Harness.Consumed.Any<PaymentProcessed>(m => m.Context.Message.OrderId == unknownId))
             .ShouldBeTrue();

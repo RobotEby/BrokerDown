@@ -1,4 +1,5 @@
 using MassTransit;
+using System.Diagnostics;
 
 namespace ChaosLab.IntegrationTests.Infrastructure;
 
@@ -7,6 +8,8 @@ namespace ChaosLab.IntegrationTests.Infrastructure;
 // consumers being present.
 public sealed class RabbitMqProbe<TMessage> : IAsyncDisposable where TMessage : class
 {
+    public Guid? CorrelationId { get; private set; }
+    public ActivityTraceId TraceId { get; private set; }
     private readonly IBusControl _bus;
     private readonly TaskCompletionSource<TMessage> _received =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -32,6 +35,8 @@ public sealed class RabbitMqProbe<TMessage> : IAsyncDisposable where TMessage : 
                 e.Durable = false;
                 e.Handler<TMessage>(ctx =>
                 {
+                    probe.CorrelationId = ctx.CorrelationId;
+                    probe.TraceId = Activity.Current?.TraceId ?? default;
                     probe._received.TrySetResult(ctx.Message);
                     return Task.CompletedTask;
                 });

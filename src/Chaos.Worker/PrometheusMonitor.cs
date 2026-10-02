@@ -1,12 +1,10 @@
+using Chaos.Worker.Domain;
 using System.Globalization;
 using System.Text.Json;
 
 namespace Chaos.Worker;
 
-public record MetricsAssessment(bool Healthy, bool EnoughTraffic, string Reason,
-    double Completed, double FailureRatio, double? P95Seconds, DateTimeOffset ObservedAt);
-
-public sealed class PrometheusMonitor(HttpClient http, ChaosOptions options, TimeProvider clock)
+public sealed class PrometheusMonitor(HttpClient http, ChaosSafetyPolicy safety, TimeProvider clock)
 {
     public const string ReadyQuery = "count(count by (service_name) ((chaoslab_service_ready{service_name=~\"orders-api|payments-api\"} == 1) and (time() - chaoslab_service_heartbeat < 15))) or vector(0)";
     public const string CompletedQuery = "sum(increase(chaoslab_order_duration_seconds_count[1m])) or vector(0)";
@@ -19,13 +17,7 @@ public sealed class PrometheusMonitor(HttpClient http, ChaosOptions options, Tim
         {
             var values = await Task.WhenAll(QueryAsync(ReadyQuery, ct), QueryAsync(CompletedQuery, ct),
                 QueryAsync(FailedQuery, ct), QueryAsync(LatencyQuery, ct));
-            var count = values[1] ?? 0;
-            var ratio = (values[2] ?? 0) / Math.Max(count, 1);
-            var healthy = values[0] == 2 && values[1] is not null && values[2] is not null &&
-                values[3] is { } latency && ratio <= options.MaximumFailureRatio && latency <= options.MaximumP95Seconds;
-            var enough = count >= options.MinimumOrders;
-            return new(healthy, enough, !healthy ? "Readiness, freshness, errors or latency outside safety limits" :
-                !enough ? "Waiting for recent completed orders" : "Safe to run", count, ratio, values[3], clock.GetUtcNow());
+            return safety.Assess(values[0], values[1], values[2], values[3], clock.GetUtcNow());
         }
         catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or JsonException or TaskCanceledException or InvalidOperationException or KeyNotFoundException or FormatException)
         {

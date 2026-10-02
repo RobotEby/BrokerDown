@@ -1,8 +1,10 @@
+using Shared.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Time.Testing;
-using Payments.Api.Gateways;
+using Payments.Api.Infrastructure.Gateways;
+using Payments.Api.Application;
 using Shouldly;
 using Xunit;
 
@@ -12,7 +14,7 @@ namespace Payments.UnitTests;
 public class ResilientPaymentGatewayTests
 {
     private static readonly ChargeRequest Request = new(Guid.NewGuid(), 149.90m);
-    private static readonly ChargeResult Approved = new(true, "primary", null);
+    private static readonly ChargeResult Approved = new(true, PaymentGateway.Primary, null);
     private static ResilientPaymentGateway Create(IPaymentGateway primary, IPaymentGateway fallback,
         ResilienceOptions? options = null, TimeProvider? clock = null,
         Func<ChargeRequest, CancellationToken, Task<ChargeResult?>>? reconcile = null) =>
@@ -25,7 +27,7 @@ public class ResilientPaymentGatewayTests
     {
         var primary = new Gateway((call, _) => call < 3
             ? Task.FromException<ChargeResult>(new GatewayUnavailableException()) : Task.FromResult(Approved));
-        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, "fallback", null)));
+        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, PaymentGateway.Fallback, null)));
         (await Create(primary, fallback).ChargeAsync(Request, default)).ShouldBe(Approved);
         primary.Calls.ShouldBe(3);
         fallback.Calls.ShouldBe(0);
@@ -34,7 +36,7 @@ public class ResilientPaymentGatewayTests
     [Fact]
     public async Task Decline_DoesNotRetryOrFallback()
     {
-        var primary = new Gateway((_, _) => Task.FromResult(new ChargeResult(false, "primary", "declined")));
+        var primary = new Gateway((_, _) => Task.FromResult(new ChargeResult(false, PaymentGateway.Primary, "declined")));
         var fallback = new Gateway((_, _) => Task.FromResult(Approved));
         (await Create(primary, fallback).ChargeAsync(Request, default)).Success.ShouldBeFalse();
         primary.Calls.ShouldBe(1);
@@ -45,9 +47,9 @@ public class ResilientPaymentGatewayTests
     public async Task Timeout_UsesFallback_AndOriginalCancellationDoesNot()
     {
         var primary = new Gateway(async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return Approved; });
-        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, "fallback", null)));
+        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, PaymentGateway.Fallback, null)));
         var gateway = Create(primary, fallback, new ResilienceOptions { TimeoutMilliseconds = 20, RetryDelayMilliseconds = 1 });
-        (await gateway.ChargeAsync(Request, default)).Gateway.ShouldBe("fallback");
+        (await gateway.ChargeAsync(Request, default)).Gateway.ShouldBe(PaymentGateway.Fallback);
         primary.Calls.ShouldBe(3);
         fallback.Calls.ShouldBe(1);
         using var cancelled = new CancellationTokenSource();
@@ -62,7 +64,7 @@ public class ResilientPaymentGatewayTests
         var clock = new FakeTimeProvider();
         var failed = true;
         var primary = new Gateway((_, _) => failed ? Task.FromException<ChargeResult>(new GatewayUnavailableException()) : Task.FromResult(Approved));
-        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, "fallback", null)));
+        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, PaymentGateway.Fallback, null)));
         var gateway = Create(primary, fallback, new ResilienceOptions { Retries = 0, MinimumThroughput = 2 }, clock);
         await gateway.ChargeAsync(Request, default);
         await gateway.ChargeAsync(Request, default);
@@ -70,7 +72,7 @@ public class ResilientPaymentGatewayTests
         primary.Calls.ShouldBe(2);
         failed = false;
         clock.Advance(TimeSpan.FromSeconds(11));
-        (await gateway.ChargeAsync(Request, default)).Gateway.ShouldBe("primary");
+        (await gateway.ChargeAsync(Request, default)).Gateway.ShouldBe(PaymentGateway.Primary);
         primary.Calls.ShouldBe(3);
     }
 
@@ -80,7 +82,7 @@ public class ResilientPaymentGatewayTests
     public async Task SqlProviderCancellation_PreservesTimeoutAndCallerCancellation(bool callerCancels)
     {
         var primary = new SimulatedPrimaryGateway(new ChargeLedger(new CancelledSqlFactory()), new ConfigurationBuilder().Build());
-        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, "fallback", null)));
+        var fallback = new Gateway((_, _) => Task.FromResult(new ChargeResult(true, PaymentGateway.Fallback, null)));
         var gateway = Create(primary, fallback, new ResilienceOptions { Retries = 0, TimeoutMilliseconds = callerCancels ? 5000 : 20 });
         using var caller = new CancellationTokenSource();
         if (callerCancels)
@@ -91,7 +93,7 @@ public class ResilientPaymentGatewayTests
         }
         else
         {
-            (await gateway.ChargeAsync(Request, caller.Token)).Gateway.ShouldBe("fallback");
+            (await gateway.ChargeAsync(Request, caller.Token)).Gateway.ShouldBe(PaymentGateway.Fallback);
             fallback.Calls.ShouldBe(1);
         }
     }
@@ -115,6 +117,33 @@ public class ResilientPaymentGatewayTests
         await Should.ThrowAsync<ArgumentException>(() => Create(primary, fallback).ChargeAsync(Request, default));
         primary.Calls.ShouldBe(1);
         fallback.Calls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task FailedFallbackPropagates_AndItsCircuitRecoversIndependently()
+    {
+        var clock = new FakeTimeProvider();
+        var primaryFailed = true;
+        var fallbackFailed = true;
+        var primary = new Gateway((_, _) => primaryFailed
+            ? Task.FromException<ChargeResult>(new GatewayUnavailableException()) : Task.FromResult(Approved));
+        var fallback = new Gateway((_, _) => fallbackFailed
+            ? Task.FromException<ChargeResult>(new GatewayUnavailableException())
+            : Task.FromResult(new ChargeResult(true, PaymentGateway.Fallback, null)));
+        var gateway = Create(primary, fallback, new ResilienceOptions { Retries = 0, MinimumThroughput = 2 }, clock);
+        await Should.ThrowAsync<GatewayUnavailableException>(() => gateway.ChargeAsync(Request, default));
+        await Should.ThrowAsync<GatewayUnavailableException>(() => gateway.ChargeAsync(Request, default));
+        await Should.ThrowAsync<Polly.CircuitBreaker.BrokenCircuitException>(() => gateway.ChargeAsync(Request, default));
+        primary.Calls.ShouldBe(2);
+        fallback.Calls.ShouldBe(2);
+        clock.Advance(TimeSpan.FromSeconds(11));
+        primaryFailed = false;
+        (await gateway.ChargeAsync(Request, default)).Gateway.ShouldBe(PaymentGateway.Primary);
+        fallback.Calls.ShouldBe(2);
+        primaryFailed = true;
+        fallbackFailed = false;
+        (await gateway.ChargeAsync(Request, default)).Gateway.ShouldBe(PaymentGateway.Fallback);
+        fallback.Calls.ShouldBe(3);
     }
 
     private sealed class CancelledSqlFactory : IDbContextFactory<SimulatedGatewayDb>

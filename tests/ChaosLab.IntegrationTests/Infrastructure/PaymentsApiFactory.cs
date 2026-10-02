@@ -6,7 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using PaymentsProgram = PaymentsApi::Program;
-using PaymentsApi::Payments.Api.Gateways;
+using PaymentsApi::Payments.Api.Infrastructure.Gateways;
+using PaymentsApi::Payments.Api.Application;
 
 namespace ChaosLab.IntegrationTests.Infrastructure;
 

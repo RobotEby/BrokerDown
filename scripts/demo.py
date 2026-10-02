@@ -4,6 +4,7 @@ import argparse
 import concurrent.futures
 import datetime
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -17,6 +18,18 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 ORDERS, PAYMENTS, WORKER, PROMETHEUS = (f'http://localhost:{p}' for p in (5001, 5002, 5003, 9090))
 
 
+def admin_key():
+    key = os.environ.get('CHAOS_ADMIN_API_KEY')
+    if key is None and (ROOT / '.env').exists():
+        for line in (ROOT / '.env').read_text().splitlines():
+            name, separator, value = line.strip().partition('=')
+            if separator and name == 'CHAOS_ADMIN_API_KEY':
+                key = value.strip().strip('\"\'')
+    if not key or len(key) < 32:
+        raise RuntimeError('Configure CHAOS_ADMIN_API_KEY with at least 32 characters in the environment or .env')
+    return key
+
+
 class HttpFailure(RuntimeError):
     def __init__(self, code, message):
         super().__init__(message)
@@ -24,8 +37,11 @@ class HttpFailure(RuntimeError):
 
 
 def http(base, path, data=None, method=None):
+    headers = {'Content-Type': 'application/json'}
+    if base == WORKER and path.startswith('/chaos'):
+        headers['X-Chaos-Api-Key'] = admin_key()
     request = urllib.request.Request(base + path, None if data is None else json.dumps(data).encode(),
-                                     {'Content-Type': 'application/json'}, method=method)
+                                     headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             body = response.read().decode()

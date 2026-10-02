@@ -1,12 +1,15 @@
 extern alias PaymentsApi;
 
+using Shared.Contracts;
 using System.Net;
 using ChaosLab.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using PaymentsApi::Payments.Api;
-using PaymentsApi::Payments.Api.Gateways;
+using PaymentsApi::Payments.Api.Domain;
+using PaymentsApi::Payments.Api.Infrastructure.Gateways;
+using PaymentsApi::Payments.Api.Application;
 using Shouldly;
 using Xunit;
 
@@ -55,7 +58,7 @@ public class PaymentsEndpointsTests : IAsyncLifetime
                 OrderId = orderId,
                 Amount = 149.90m,
                 Status = PaymentStatus.Approved,
-                Gateway = "primary",
+                Gateway = PaymentGateway.Primary,
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();

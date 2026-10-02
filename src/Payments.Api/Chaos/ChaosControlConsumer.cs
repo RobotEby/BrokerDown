@@ -1,15 +1,28 @@
 using MassTransit;
+using System.Diagnostics;
 using Shared.Contracts;
+using Shared.Infrastructure;
 
 namespace Payments.Api.Chaos;
 
 // Control must remain available independently of a SQL transaction or a payment's retry.
 public sealed class ChaosControlConsumer(ChaosState state) : IConsumer<ChaosStart>, IConsumer<ChaosAbort>
 {
-    public Task Consume(ConsumeContext<ChaosStart> context) =>
-        context.Publish(state.Start(context.Message), context.CancellationToken);
-    public Task Consume(ConsumeContext<ChaosAbort> context) => state.Abort(context.Message) is { } changed
-        ? context.Publish(changed, context.CancellationToken) : Task.CompletedTask;
+    public Task Consume(ConsumeContext<ChaosStart> context)
+    {
+        Telemetry.EnrichMessageActivity(context);
+        Activity.Current?.SetTag("chaos.experiment.id", context.Message.ExperimentId.ToString());
+        return context.Publish(state.Start(context.Message), c => c.CorrelationId = context.Message.ExperimentId, context.CancellationToken);
+    }
+
+    public Task Consume(ConsumeContext<ChaosAbort> context)
+    {
+        Telemetry.EnrichMessageActivity(context);
+        Activity.Current?.SetTag("chaos.experiment.id", context.Message.ExperimentId?.ToString())
+            .SetTag("chaos.kill_switch", context.Message.KillSwitch);
+        return state.Abort(context.Message) is { } changed
+            ? context.Publish(changed, c => c.CorrelationId = changed.ExperimentId, context.CancellationToken) : Task.CompletedTask;
+    }
 }
 
 public sealed class ChaosExpiryService(ChaosState state, IBus bus, ILogger<ChaosExpiryService> logger) : BackgroundService
@@ -22,7 +35,7 @@ public sealed class ChaosExpiryService(ChaosState state, IBus bus, ILogger<Chaos
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 timeout.CancelAfter(TimeSpan.FromSeconds(2));
-                try { await bus.Publish(changed, timeout.Token); }
+                try { await bus.Publish(changed, c => c.CorrelationId = changed.ExperimentId, timeout.Token); }
                 catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 { logger.LogWarning(ex, "Chaos {ExperimentId} ended locally; notification unavailable", changed.ExperimentId); }
             }

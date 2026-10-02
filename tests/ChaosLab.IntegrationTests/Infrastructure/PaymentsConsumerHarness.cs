@@ -6,7 +6,9 @@ using MassTransit.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PaymentsApi::Payments.Api;
-using PaymentsApi::Payments.Api.Gateways;
+using PaymentsApi::Payments.Api.Domain;
+using PaymentsApi::Payments.Api.Infrastructure.Gateways;
+using PaymentsApi::Payments.Api.Application;
 using Shared.Contracts;
 
 namespace ChaosLab.IntegrationTests.Infrastructure;
@@ -29,13 +31,17 @@ public sealed class PaymentsConsumerHarness : IAsyncDisposable
         Interceptor = interceptor;
     }
 
-    public static async Task<PaymentsConsumerHarness> StartAsync(string connectionString, IPaymentGateway gateway)
+    public static async Task<PaymentsConsumerHarness> StartAsync(string connectionString, IPaymentGateway gateway, Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor? failure = null)
     {
         var interceptor = new ToggleableFailureInterceptor();
         var services = new ServiceCollection();
 
         services.AddSingleton(interceptor);
-        services.AddDbContext<PaymentsDb>(o => o.UseSqlServer(connectionString).AddInterceptors(interceptor));
+        services.AddDbContext<PaymentsDb>(o =>
+        {
+            o.UseSqlServer(connectionString).AddInterceptors(interceptor);
+            if (failure is not null) o.AddInterceptors(failure);
+        });
         services.AddSingleton(gateway);
 
         services.AddMassTransitTestHarness(x =>

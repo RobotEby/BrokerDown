@@ -24,3 +24,9 @@ python3 scripts/demo.py --scenario all --output artifacts/demo.json
 ```
 
 The full demo checks the real Prometheus → worker → RabbitMQ → Payments → fallback → recovery path. All categories run in CI; nothing is skipped to make a build green. CI uploads TRX and Compose logs even on failure. See [measured results](10-validation.md).
+
+## Refactoring regressions
+
+The suite includes real administrative endpoint authentication, no side effects from denied calls, historical JSON contracts, invalid states, cooldown/TTL with FakeTimeProvider, independent circuits and fallback failure. Persistence tests retain prior migrations/data and induce a real SQL deadlock (1205) after charging, proving consumer retry with one charge and one result. Concurrent terminal results cannot overwrite the winner.
+
+Trace correlation and real OTLP export are also checked. The Architecture category verifies domain boundaries, contracts and project references without another architectural testing framework. Broker recovery keeps its 120s deadline.

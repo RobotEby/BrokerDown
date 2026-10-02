@@ -6,6 +6,7 @@ using ChaosLab.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using OrdersApi::Orders.Api;
+using OrdersApi::Orders.Api.Domain;
 using Shared.Contracts;
 using Shouldly;
 using Xunit;

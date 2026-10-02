@@ -1,9 +1,10 @@
 # Docker environment
 
-The root Compose file runs six services, binds all published ports to localhost and keeps SQL, RabbitMQ and Prometheus data in named volumes. Runtime images and build SDK are pinned by digest. The applications target net8.0; SDK 10 reads the .slnx solution.
+The root Compose file runs six services, binds all published ports to localhost and keeps SQL, RabbitMQ and Prometheus data in named volumes. Runtime images and build SDK are pinned by digest. The applications target net10.0; SDK 10 reads the .slnx solution.
 
 ```bash
 cp .env.example .env  # first setup only
+python3 -c 'import secrets; print("CHAOS_ADMIN_API_KEY=" + secrets.token_urlsafe(32))' >> .env
 docker compose config --quiet
 docker compose up -d --build --wait --wait-timeout 180
 docker compose logs -f payments-api
@@ -36,3 +37,5 @@ docker compose up -d --wait --wait-timeout 180
 ```
 
 This changes build networking only. The default remains Docker's normal build network. Diagnose port conflicts with docker compose ps; distinguish /health liveness from /health/ready dependency health. The demo restores a stopped broker even on assertion failure.
+
+Generate the administrative key only during initial setup. Worker receives `Chaos__AdminApiKey`; other services do not receive it. For IDE runs, configure the same key through user-secrets or environment variables. Trace export is optional through `Telemetry__TracesEndpoint`, separate from metrics.

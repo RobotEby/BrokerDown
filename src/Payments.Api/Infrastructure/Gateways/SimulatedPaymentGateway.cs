@@ -1,17 +1,11 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Payments.Api.Application;
+using Shared.Contracts;
 
-namespace Payments.Api.Gateways;
+namespace Payments.Api.Infrastructure.Gateways;
 
-public record ChargeRequest(Guid OrderId, decimal Amount);
-public record ChargeResult(bool Success, string Gateway, string? FailureReason);
-
-public interface IPaymentGateway
-{
-    Task<ChargeResult> ChargeAsync(ChargeRequest req, CancellationToken ct);
-}
-
-public class SimulatedPaymentGateway(ChargeLedger ledger, IConfiguration cfg, string name,
+public class SimulatedPaymentGateway(ChargeLedger ledger, IConfiguration cfg, PaymentGateway name,
     Func<CancellationToken, Task>? injectFault = null) : IPaymentGateway
 {
     public async Task<ChargeResult> ChargeAsync(ChargeRequest req, CancellationToken ct)
@@ -21,7 +15,7 @@ public class SimulatedPaymentGateway(ChargeLedger ledger, IConfiguration cfg, st
             if (await ledger.FindAsync(req, ct) is { } existing) return existing;
             if (injectFault is not null) await injectFault(ct);
             await Task.Delay(TimeSpan.FromMilliseconds(cfg.GetValue("Gateway:LatencyMilliseconds", 100)), ct);
-            var failureRate = name == "primary" ? cfg.GetValue<double>("Gateway:FailureRate") : 0;
+            var failureRate = name == PaymentGateway.Primary ? cfg.GetValue<double>("Gateway:FailureRate") : 0;
             var result = Random.Shared.NextDouble() < failureRate
                 ? new ChargeResult(false, name, "Declined by simulated gateway")
                 : new ChargeResult(true, name, null);
@@ -36,9 +30,9 @@ public class SimulatedPaymentGateway(ChargeLedger ledger, IConfiguration cfg, st
 }
 
 public sealed class SimulatedPrimaryGateway(ChargeLedger ledger, IConfiguration cfg,
-    Func<CancellationToken, Task>? injectFault = null) : SimulatedPaymentGateway(ledger, cfg, "primary", injectFault);
+    Func<CancellationToken, Task>? injectFault = null) : SimulatedPaymentGateway(ledger, cfg, PaymentGateway.Primary, injectFault);
 
 public sealed class SimulatedFallbackGateway(ChargeLedger ledger, IConfiguration cfg)
-    : SimulatedPaymentGateway(ledger, cfg, "fallback");
+    : SimulatedPaymentGateway(ledger, cfg, PaymentGateway.Fallback);
 
 public sealed class GatewayUnavailableException(string message = "Simulated gateway unavailable") : Exception(message);

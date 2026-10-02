@@ -2,11 +2,11 @@
 
 ## 1. Estado final
 
-Núcleo implementado. Este documento não registra contagens de build ou de testes; execute os comandos de [Executar novamente](#7-executar-novamente) ou consulte a execução da CI para os resultados atuais. Os testes de integração incluem casos da categoria Chaos.
+Refatoração implementada. A validação local de 2026-10-01 está registrada abaixo; execute os comandos de [Executar novamente](#7-executar-novamente) ou consulte a CI para alterações posteriores. Os testes de integração incluem casos da categoria Chaos.
 
 O laboratório roda como seis serviços do Compose. O fluxo Prometheus → worker → RabbitMQ → falha → fallback → recuperação é exercitado por `scripts/demo.py` e pelos testes de integração.
 
-Ambiente: as aplicações usam net8.0. global.json aceita versões compatíveis do SDK 10.
+Ambiente: as aplicações usam net10.0. global.json aceita versões compatíveis do SDK 10.
 
 ## 2. Problemas encontrados e corrigidos
 
@@ -28,7 +28,7 @@ A falha de cancelamento SQL foi mantida nos logs e reprocessada deliberadamente 
 
 - src/Orders.Api/Program.cs e PaymentProcessedConsumer.cs: validação, readiness, métricas e transição terminal atômica.
 - Definições dos consumidores e harnesses: Inbox/Outbox transacional e retries SQL limitados.
-- src/Payments.Api/Gateways/: registro independente e pipelines Polly.
+- src/Payments.Api/Infrastructure/Gateways/: registro independente e pipelines Polly.
 - src/Payments.Api/Migrations/ e PaymentsDatabase.cs: banco novo.
 - src/Payments.Api/Chaos/, src/Chaos.Worker/ e Shared.Contracts/Chaos.cs: comandos, confirmação, TTL, controle e avaliação de segurança.
 - src/Shared.Infrastructure/: inicialização, saúde, métricas e diagnóstico de consumo.
@@ -37,13 +37,13 @@ A falha de cancelamento SQL foi mantida nos logs e reprocessada deliberadamente 
 
 ## 4. Arquitetura final e limites
 
-Orders confirma pedido + Bus Outbox e retorna 202. RabbitMQ entrega a Payments com EF Inbox/Outbox. Principal/contingencial compartilham registro de cobrança confirmado independentemente. Payments confirma o resultado; Orders aplica a primeira transição terminal. OpenTelemetry exporta diretamente ao Prometheus; o worker executa no máximo um experimento explicitamente solicitado, após métricas seguras e confirmação do alvo.
+Orders confirma pedido + Bus Outbox e retorna 202. RabbitMQ entrega a Payments com EF Inbox/Outbox. Principal/contingencial compartilham registro de cobrança confirmado independentemente. Payments confirma o resultado; Orders aplica a primeira transição terminal. OpenTelemetry exporta métricas diretamente ao Prometheus e traces ao endpoint OTLP/HTTP opcional. O worker executa no máximo um experimento explicitamente solicitado, após autenticação administrativa, métricas seguras e confirmação do alvo.
 
 A entrega de mensagens é pelo menos uma vez, com idempotência durável de negócio. O registro simulado compartilhado é essencial à garantia demonstrada de fallback. Provedores reais independentes, coordenação distribuída e capacidade de produção não foram comprovados. Experimentos têm estado no processo; o TTL local protege durante perda de comunicação.
 
 ## 5. Validação da queda do RabbitMQ
 
-Os testes de integração param e reiniciam o broker enquanto as mesmas APIs Orders e Payments continuam em execução. Eles verificam porta fixa, resposta 202 durante a queda, Outbox pendente, reconexão, status Paid e exatamente um pagamento e uma cobrança. O limite de 120s inclui a readiness das APIs após o broker ficar pronto. Tempos não são registrados aqui porque variam por máquina.
+Os testes de integração param e reiniciam o broker enquanto as mesmas APIs Orders e Payments continuam em execução. Eles verificam porta fixa, resposta 202 durante a queda, Outbox pendente, reconexão, status Paid e exatamente um pagamento e uma cobrança. Também verificam que o contexto de tracing da requisição HTTP original chega aos dois consumidores após a recuperação. O limite de 120s inclui a readiness das APIs após o broker ficar pronto e não foi aumentado.
 
 ## 6. Validações executadas
 
@@ -51,10 +51,9 @@ Os testes de integração param e reiniciam o broker enquanto as mesmas APIs Ord
 dotnet tool restore
 dotnet restore ChaosLab.NET.slnx
 dotnet build ChaosLab.NET.slnx --no-restore -c Release
-dotnet test ChaosLab.NET.slnx --no-build -c Release --logger 'trx;LogFilePrefix=verified' --results-directory artifacts
-dotnet test tests/Chaos.UnitTests -c Release --logger 'trx;LogFileName=chaos-unit.trx' --results-directory artifacts
-dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter FullyQualifiedName~Order_PaymentsApiStartsLate
-dotnet test tests/ChaosLab.IntegrationTests --no-build -c Release --filter FullyQualifiedName~Order_BrokerUnavailable_StillAcceptedAndDeliveredOnceBrokerReturns
+dotnet list ChaosLab.NET.slnx package --vulnerable --include-transitive
+dotnet ef migrations has-pending-model-changes --project src/Payments.Api --context PaymentsDb --no-build --configuration Release
+dotnet test ChaosLab.NET.slnx --no-build -c Release --logger 'trx;LogFilePrefix=validated-refactor' --results-directory artifacts
 docker compose config --quiet
 BUILD_NETWORK=host docker compose build
 docker compose run --rm --no-deps payments-api --deploy-topology
@@ -70,7 +69,27 @@ python3 scripts/demo.py --scenario all --output artifacts/demo.json
 | Queda RabbitMQ | 202/Pending → Paid quando o broker volta |
 | Execução completa, incluindo aquecimento/recuperação | Pedidos, pagamentos e cobranças únicos; kill switch rejeita nova execução |
 
-As evidências locais ficam em artifacts/ (ignorado pelo Git): build.log, payments-unit.trx, chaos-unit.trx, verified_*.trx, rabbit-1/2/3.trx, late-payments.trx, test-summary.json, demo.json, demo-final.log, prometheus-evidence.json, restart-before/after.log, database-final.log e compose.log. A CI publica TRX/logs diagnósticos e evidências Compose. Não foi observada uma execução remota do GitHub Actions nesta sessão.
+### Validação local da refatoração — 2026-10-01
+
+| Verificação | Resultado |
+|---|---|
+| Build Release | Sucesso, sem avisos ou erros |
+| Testes unitários | 47 aprovados: 32 de Chaos/contratos/arquitetura e 15 de Payments |
+| Testes de integração | 38 aprovados, incluindo Chaos, autorização, recuperação de deadlock SQL real, recuperação do broker e tracing |
+| Suíte completa | 85 aprovados, nenhuma falha e nenhum teste ignorado |
+| Auditoria de dependências | Nenhuma vulnerabilidade conhecida, incluindo transitivas, nos oito projetos |
+| Modelo EF e persistência | Nenhuma mudança pendente; integração cobre migrations existentes e valores de gateway persistidos |
+| Exportação OTLP | Exportação HTTP/protobuf real de métricas e traces para endpoints separados verificada por integração |
+| Build Docker | As três imagens de aplicação foram construídas com sucesso |
+| Demo completo no Compose | 198 pedidos conferidos com 198 pagamentos e cobranças únicos; fallback em 20/20 pedidos de cada falha, aborto confirmado, expiração TTL e kill switch verificados |
+| Recuperação RabbitMQ no demo | Pedido Pending tornou-se Paid 13,71s após o reinício do broker, dentro do limite inalterado de 120s |
+| Prometheus | Métricas reais de readiness, pedidos/pagamentos e resiliência capturadas após o demo |
+
+O SDK local foi 10.0.112; o Docker usa SDK 10.0.401, aceito pela política `latestFeature`. A execução final inclui limites arquiteturais, payloads históricos HTTP/MassTransit, rejeição de enums ausentes/inválidos e correlação de traces e negócio pelo Outbox e RabbitMQ. O enriquecimento das atividades de mensagem ocorre dentro dos consumidores para atingir o span de consumo correto.
+
+A validação Compose usa o projeto isolado `chaoslab-refactor-validation` e uma chave administrativa temporária; o `.env` e os volumes existentes são preservados. Uma tentativa anterior de integração falhou na inicialização da infraestrutura Docker enquanto builds e Compose disputavam recursos da máquina. O log foi mantido em `artifacts/tests-docker-timeout.log`; a suíte completa final passou após executar essas cargas sequencialmente, sem alterar prazos ou asserções.
+
+As evidências locais ficam em `artifacts/` (ignorado pelo Git): `build-final.log`, `tests-final.log`, `validated-refactor*.trx`, `dependency-audit.log`, `ef-model-validation.log`, `docker-build-final.log`, `demo-refactor-final.json`, `demo-refactor-final.log`, `prometheus-refactor-final.json` e `compose-refactor-final.log`. A CI publica TRX/logs diagnósticos e evidências Compose. Não foi observada uma execução remota do GitHub Actions nesta sessão.
 
 ## 7. Executar novamente
 
@@ -80,4 +99,4 @@ Siga o [README](../../README.pt-BR.md) para ambiente novo. Preserve um .env exis
 
 **Bloqueador:** nenhum conhecido para o laboratório local. Execução remota da CI não é apresentada como concluída.
 
-**Melhoria futura:** Grafana/traces, reconciliação com provedores reais, coordenação de múltiplas instâncias, avaliação de vazão e componentes opcionais do [roadmap](08-roadmap.md).
+**Melhoria futura:** backend de armazenamento de traces/Grafana no Compose, reconciliação com provedores reais, coordenação de múltiplas instâncias, avaliação de vazão e componentes opcionais do [roadmap](08-roadmap.md).

@@ -7,7 +7,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using PaymentsApi::Payments.Api;
-using PaymentsApi::Payments.Api.Gateways;
+using PaymentsApi::Payments.Api.Domain;
+using PaymentsApi::Payments.Api.Infrastructure.Gateways;
+using PaymentsApi::Payments.Api.Application;
 using Shared.Contracts;
 using Shouldly;
 using Xunit;
@@ -38,7 +40,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
     {
         var orderId = Guid.NewGuid();
         _gateway.ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ChargeResult(true, "primary", null));
+            .Returns(new ChargeResult(true, PaymentGateway.Primary, null));
 
         await _harness.Harness.Bus.Publish(new OrderCreated(orderId, Guid.NewGuid(), 149.90m, DateTimeOffset.UtcNow));
 
@@ -50,7 +52,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
             .Payments.SingleAsync(p => p.OrderId == orderId);
 
         payment.Status.ShouldBe(PaymentStatus.Approved);
-        payment.Gateway.ShouldBe("primary");
+        payment.Gateway.ShouldBe(PaymentGateway.Primary);
         payment.FailureReason.ShouldBeNull();
     }
 
@@ -60,7 +62,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
     {
         var orderId = Guid.NewGuid();
         _gateway.ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ChargeResult(false, "primary", "Card declined"));
+            .Returns(new ChargeResult(false, PaymentGateway.Primary, "Card declined"));
 
         await _harness.Harness.Bus.Publish(new OrderCreated(orderId, Guid.NewGuid(), 149.90m, DateTimeOffset.UtcNow));
 
@@ -90,7 +92,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
                 OrderId = orderId,
                 Amount = 149.90m,
                 Status = PaymentStatus.Approved,
-                Gateway = "primary",
+                Gateway = PaymentGateway.Primary,
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
@@ -117,7 +119,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
         var orderId = Guid.NewGuid();
         var messageId = Guid.NewGuid();
         _gateway.ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ChargeResult(true, "primary", null));
+            .Returns(new ChargeResult(true, PaymentGateway.Primary, null));
 
         var message = new OrderCreated(orderId, Guid.NewGuid(), 149.90m, DateTimeOffset.UtcNow);
 
@@ -142,7 +144,7 @@ public class OrderCreatedConsumerTests : IAsyncLifetime
     {
         var orderId = Guid.NewGuid();
         _gateway.ChargeAsync(Arg.Any<ChargeRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ChargeResult(true, "primary", null));
+            .Returns(new ChargeResult(true, PaymentGateway.Primary, null));
         _harness.Interceptor.ShouldFail = true;
 
         await _harness.Harness.Bus.Publish(new OrderCreated(orderId, Guid.NewGuid(), 149.90m, DateTimeOffset.UtcNow));

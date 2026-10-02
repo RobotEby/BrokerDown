@@ -1,7 +1,10 @@
+using Payments.Api.Domain;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
-using Payments.Api.Gateways;
+using Payments.Api.Infrastructure.Gateways;
+using Payments.Api.Application;
 using Shared.Contracts;
+using Shared.Infrastructure;
 
 namespace Payments.Api;
 
@@ -11,6 +14,10 @@ public class OrderCreatedConsumer(PaymentsDb db, IPaymentGateway gateway, ILogge
     public async Task Consume(ConsumeContext<OrderCreated> ctx)
     {
         var m = ctx.Message;
+        Telemetry.EnrichMessageActivity(ctx);
+        System.Diagnostics.Activity.Current?.SetTag("order.id", m.OrderId.ToString());
+        using var scope = log.BeginScope(new Dictionary<string, object?>
+        { ["OrderId"] = m.OrderId, ["MessageId"] = ctx.MessageId, ["CorrelationId"] = ctx.CorrelationId });
         if (m.OrderId == Guid.Empty || m.CustomerId == Guid.Empty || !Money.IsValid(m.Amount))
             throw new ArgumentException("OrderCreated contains an invalid customer, order or monetary amount");
 
@@ -35,10 +42,11 @@ public class OrderCreatedConsumer(PaymentsDb db, IPaymentGateway gateway, ILogge
         });
 
         await ctx.Publish(new PaymentProcessed(
-            m.OrderId, result.Success, result.Gateway, result.FailureReason, DateTimeOffset.UtcNow), ctx.CancellationToken);
+            m.OrderId, result.Success, result.Gateway, result.FailureReason, DateTimeOffset.UtcNow),
+            context => context.CorrelationId = m.OrderId, ctx.CancellationToken);
 
         await db.SaveChangesAsync(ctx.CancellationToken);
-        PaymentTelemetry.Completed.Add(1, new("status", result.Success ? "approved" : "declined"), new("gateway", result.Gateway));
+        PaymentTelemetry.Completed.Add(1, new("status", result.Success ? "approved" : "declined"), new("gateway", result.Gateway.ToWireName()));
         log.LogInformation("Payment for {OrderId}: {Success} via {Gateway}", m.OrderId, result.Success, result.Gateway);
     }
 }
