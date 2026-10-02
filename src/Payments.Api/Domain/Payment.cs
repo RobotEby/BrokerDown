@@ -14,4 +14,3 @@ public class Payment
     public string? FailureReason { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-

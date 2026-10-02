@@ -11,4 +11,3 @@ public class Order
     public string? FailureReason { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
-
