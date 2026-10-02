@@ -2,6 +2,7 @@ using Orders.Api.Domain;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Shared.Contracts;
+using Shared.Infrastructure;
 
 namespace Orders.Api;
 
@@ -11,6 +12,7 @@ public class PaymentProcessedConsumer(OrdersDb db, ILogger<PaymentProcessedConsu
     public async Task Consume(ConsumeContext<PaymentProcessed> ctx)
     {
         var m = ctx.Message;
+        Telemetry.EnrichMessageActivity(ctx);
         if (!Enum.IsDefined(m.Gateway) || m.Gateway == PaymentGateway.Unknown)
             throw new ArgumentException("PaymentProcessed contains an invalid gateway");
         System.Diagnostics.Activity.Current?.SetTag("order.id", m.OrderId.ToString());
