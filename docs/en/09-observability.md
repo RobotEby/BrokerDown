@@ -2,7 +2,7 @@
 
 OpenTelemetry 1.18.0 exports cumulative metrics every 5s over OTLP/HTTP directly to Prometheus 3.5.0. Compose enables its native OTLP receiver. No Collector, Grafana or trace backend is installed. See [OTel exporters](https://opentelemetry.io/docs/languages/dotnet/exporters/) and [Prometheus OTLP support](https://prometheus.io/docs/guides/opentelemetry/).
 
-Telemetry__MetricsEndpoint is http://prometheus:9090/api/v1/otlp/v1/metrics in Compose. The receiver promotes service.name to service_name. IDs appear in structured logs only; bounded labels include status, gateway, event and fault.
+Telemetry__MetricsEndpoint is http://prometheus:9090/api/v1/otlp/v1/metrics in Compose. The receiver promotes service.name to service_name. IDs appear in structured logs and traces; bounded metric labels include status, gateway, event and fault.
 
 | Prometheus metric | Meaning |
 |---|---|
