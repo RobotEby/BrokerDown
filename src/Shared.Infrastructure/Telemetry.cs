@@ -18,6 +18,12 @@ public static class Telemetry
 {
     public static readonly ActivitySource Activities = new("ChaosLab");
 
+    // Consume observers can run before MassTransit creates the consumer span.
+    // Enrich inside the consumer as well, where Activity.Current is that span.
+    public static void EnrichMessageActivity<T>(ConsumeContext<T> context) where T : class =>
+        Activity.Current?.SetTag("messaging.message.id", context.MessageId?.ToString())
+            .SetTag("messaging.message.correlation_id", context.CorrelationId?.ToString());
+
     public static IServiceCollection AddLabTelemetry(this IServiceCollection services, IConfiguration config, string serviceName)
     {
         services.Configure<LoggerFactoryOptions>(o => o.ActivityTrackingOptions =
@@ -89,8 +95,7 @@ public sealed class MessageFaultTelemetry(ILogger<MessageFaultTelemetry> logger)
     private static readonly Counter<long> Errors = Meter.CreateCounter<long>("chaoslab.messaging.errors");
     public Task PreConsume<T>(ConsumeContext<T> context) where T : class
     {
-        Activity.Current?.SetTag("messaging.message.id", context.MessageId?.ToString())
-            .SetTag("messaging.message.correlation_id", context.CorrelationId?.ToString());
+        Telemetry.EnrichMessageActivity(context);
         return Task.CompletedTask;
     }
     public Task PostConsume<T>(ConsumeContext<T> context) where T : class => Task.CompletedTask;
