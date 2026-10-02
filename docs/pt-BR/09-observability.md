@@ -2,7 +2,7 @@
 
 OpenTelemetry 1.18.0 exporta métricas cumulativas a cada 5s por OTLP/HTTP diretamente ao Prometheus 3.5.0. Compose habilita seu receiver nativo. Não há Collector, Grafana ou backend de traces. Referências: [exporters OTel](https://opentelemetry.io/docs/languages/dotnet/exporters/) e [OTLP no Prometheus](https://prometheus.io/docs/guides/opentelemetry/).
 
-Telemetry__MetricsEndpoint aponta para http://prometheus:9090/api/v1/otlp/v1/metrics. O receiver promove service.name para service_name. IDs ficam somente nos logs; labels limitados incluem status, gateway, event e fault.
+Telemetry__MetricsEndpoint aponta para http://prometheus:9090/api/v1/otlp/v1/metrics. O receiver promove service.name para service_name. IDs ficam nos logs e traces; labels limitados de métricas incluem status, gateway, event e fault.
 
 | Métrica Prometheus | Significado |
 |---|---|
