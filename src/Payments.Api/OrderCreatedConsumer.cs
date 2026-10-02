@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Payments.Api.Infrastructure.Gateways;
 using Payments.Api.Application;
 using Shared.Contracts;
+using Shared.Infrastructure;
 
 namespace Payments.Api;
 
@@ -13,6 +14,7 @@ public class OrderCreatedConsumer(PaymentsDb db, IPaymentGateway gateway, ILogge
     public async Task Consume(ConsumeContext<OrderCreated> ctx)
     {
         var m = ctx.Message;
+        Telemetry.EnrichMessageActivity(ctx);
         System.Diagnostics.Activity.Current?.SetTag("order.id", m.OrderId.ToString());
         using var scope = log.BeginScope(new Dictionary<string, object?>
         { ["OrderId"] = m.OrderId, ["MessageId"] = ctx.MessageId, ["CorrelationId"] = ctx.CorrelationId });

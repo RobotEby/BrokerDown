@@ -1,6 +1,7 @@
 using MassTransit;
 using System.Diagnostics;
 using Shared.Contracts;
+using Shared.Infrastructure;
 
 namespace Payments.Api.Chaos;
 
@@ -9,12 +10,14 @@ public sealed class ChaosControlConsumer(ChaosState state) : IConsumer<ChaosStar
 {
     public Task Consume(ConsumeContext<ChaosStart> context)
     {
+        Telemetry.EnrichMessageActivity(context);
         Activity.Current?.SetTag("chaos.experiment.id", context.Message.ExperimentId.ToString());
         return context.Publish(state.Start(context.Message), c => c.CorrelationId = context.Message.ExperimentId, context.CancellationToken);
     }
 
     public Task Consume(ConsumeContext<ChaosAbort> context)
     {
+        Telemetry.EnrichMessageActivity(context);
         Activity.Current?.SetTag("chaos.experiment.id", context.Message.ExperimentId?.ToString())
             .SetTag("chaos.kill_switch", context.Message.KillSwitch);
         return state.Abort(context.Message) is { } changed
